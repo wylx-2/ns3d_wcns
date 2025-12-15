@@ -79,10 +79,10 @@ bool read_solver_params_from_file(
             else if (v=="vanleer") P.fvs_type = SolverParams::FVS_Type::VanLeer;
             else if (v=="laxfriedrichs") P.fvs_type = SolverParams::FVS_Type::LaxFriedrichs;
         }
-        else if (k=="recon") {
-            if (v=="mdcd") P.recon = SolverParams::Reconstruction::MDCD;
-            else if (v=="weno5") P.recon = SolverParams::Reconstruction::WENO5;
-            else if (v=="linear") P.recon = SolverParams::Reconstruction::LINEAR;
+        else if (k=="interpolation") {
+            if (v=="mdcd") P.interpolation = SolverParams::Interpolation::MDCD;
+            else if (v=="weno5") P.interpolation = SolverParams::Interpolation::WENO5;
+            else if (v=="zero") P.interpolation = SolverParams::Interpolation::ZERO;
         }
         else if (k=="vis_scheme") {
             if (v=="c4") P.vis_scheme = SolverParams::ViscousScheme::C4th;
@@ -151,9 +151,9 @@ bool read_solver_params_from_file(
     if (P.bc_zmin==SolverParams::BCType::Periodic &&
         P.bc_zmax==SolverParams::BCType::Periodic)
         C.periods[2] = 1;
-    G.dx = G.Lx / (G.global_nx-1);
-    G.dy = G.Ly / (G.global_ny-1);
-    G.dz = G.Lz / (G.global_nz-1);
+    G.dx = G.Lx / (G.global_nx);
+    G.dy = G.Ly / (G.global_ny);
+    G.dz = G.Lz / (G.global_nz);
 
     // 根据重构格式设置ghost层数和stencil大小
     switch (P.recon) {
@@ -290,7 +290,7 @@ void initialize_sine_x_field(Field3D &F, const GridDesc &G, const SolverParams &
     for (int i=L.ngx; i<L.ngx+L.nx; ++i) {
         int id = F.I(i,j,k);
         double rho = 1.0;
-        double u = 1.0, v = 1.0, w = 1.0;
+        double u = 0.0, v = 0.0, w = 0.0;
         F.rho[id] = rho;
         F.u[id] = std::sin(2.0 * M_PI * ( (L.ox + i - L.ngx + 0.5) * G.dx ) / G.Lx );
         F.v[id] = v;

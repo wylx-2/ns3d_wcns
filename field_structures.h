@@ -127,7 +127,13 @@ struct SolverParams {
         C6th,      // Sixth-order central difference
         C4th       // Fourth-order central difference
     };
+    enum class Interpolation {
+        WENO5,     // stencil-based WENO5
+        ZERO,      // simple zero-order interpolation 
+        MDCD,      // Minimum Dissipation controlled dispersion
+    };
     Reconstruction recon = Reconstruction::WENO5;
+    Interpolation interpolation = Interpolation::WENO5;
     ViscousScheme vis_scheme = ViscousScheme::C6th;
     double mdcd_diss = 0.01;  // MDCD dissipation coefficient
     double mdcd_disp = 0.0463783;  // MDCD dispersion coefficient
@@ -215,6 +221,11 @@ struct Field3D {
     std::vector<double> flux_fx_mass, flux_fx_momx, flux_fx_momy, flux_fx_momz, flux_fx_E;
     std::vector<double> flux_fy_mass, flux_fy_momx, flux_fy_momy, flux_fy_momz, flux_fy_E;
     std::vector<double> flux_fz_mass, flux_fz_momx, flux_fz_momy, flux_fz_momz, flux_fz_E;
+
+    // half-node interpolated values
+    std::vector<double> interp_fx_mass, interp_fx_momx, interp_fx_momy, interp_fx_momz, interp_fx_E;
+    std::vector<double> interp_fy_mass, interp_fy_momx, interp_fy_momy, interp_fy_momz, interp_fy_E;
+    std::vector<double> interp_fz_mass, interp_fz_momx, interp_fz_momy, interp_fz_momz, interp_fz_E;
 
     // constructor
     Field3D() = default;
@@ -315,18 +326,33 @@ struct Field3D {
         flux_fx_momy.assign(fx_count, 0.0);
         flux_fx_momz.assign(fx_count, 0.0);
         flux_fx_E.assign(fx_count, 0.0);
+        interp_fx_mass.assign(fx_count, 0.0);
+        interp_fx_momx.assign(fx_count, 0.0);
+        interp_fx_momy.assign(fx_count, 0.0);
+        interp_fx_momz.assign(fx_count, 0.0);
+        interp_fx_E.assign(fx_count, 0.0);
 
         flux_fy_mass.assign(fy_count, 0.0);
         flux_fy_momx.assign(fy_count, 0.0);
         flux_fy_momy.assign(fy_count, 0.0);
         flux_fy_momz.assign(fy_count, 0.0);
         flux_fy_E.assign(fy_count, 0.0);
+        interp_fy_mass.assign(fy_count, 0.0);
+        interp_fy_momx.assign(fy_count, 0.0);
+        interp_fy_momy.assign(fy_count, 0.0);
+        interp_fy_momz.assign(fy_count, 0.0);
+        interp_fy_E.assign(fy_count, 0.0);
 
         flux_fz_mass.assign(fz_count, 0.0);
         flux_fz_momx.assign(fz_count, 0.0);
         flux_fz_momy.assign(fz_count, 0.0);
         flux_fz_momz.assign(fz_count, 0.0);
         flux_fz_E.assign(fz_count, 0.0);
+        interp_fz_mass.assign(fz_count, 0.0);
+        interp_fz_momx.assign(fz_count, 0.0);
+        interp_fz_momy.assign(fz_count, 0.0);
+        interp_fz_momz.assign(fz_count, 0.0);
+        interp_fz_E.assign(fz_count, 0.0);
     }
 
     inline int I(int i, int j, int k) const noexcept { return idx3(i,j,k,L); }
@@ -726,6 +752,110 @@ inline void unpack_z_face_recv_vis_flux(Field3D &F, const std::vector<double> &b
     assert(p == (int)buf.size());
 }
 
+// --------------------------- packing/unpacking for half node flux ------------------
+inline void pack_x_face_send_halfnode_flux(const Field3D &F, std::vector<double> &buf, int send_left) {
+    const LocalDesc &L = F.L;
+    int gx = L.ngx; // half-node fluxes have one less layer
+    int ny = L.ny, nz = L.nz;
+    int p = 0;
+    int istart = send_left ? L.ngx : L.nx;
+    for (int k = L.ngz; k < L.ngz + nz; ++k) {
+        for (int j = L.ngy; j < L.ngy + ny; ++j) {
+            for (int ii = 0; ii < gx - 1; ++ii) {
+                int i = istart + ii;
+                int id = idx_fx(i,j,k,L); // half-node flux index
+                buf[p++] = F.flux_fx_mass[id]; buf[p++] = F.flux_fx_momx[id]; buf[p++] = F.flux_fx_momy[id]; buf[p++] = F.flux_fx_momz[id]; buf[p++] = F.flux_fx_E[id];
+            }
+        }
+    }
+    assert(p == (int)buf.size());
+}
+inline void unpack_x_face_recv_halfnode_flux(Field3D &F, const std::vector<double> &buf, int recv_left) {
+    const LocalDesc &L = F.L;
+    int gx = L.ngx;
+    int ny = L.ny, nz = L.nz;
+    int istart = recv_left ? 0 : (L.ngx + L.nx);
+    int p = 0;
+    for (int k = L.ngz; k < L.ngz + nz; ++k) {
+        for (int j = L.ngy; j < L.ngy + ny; ++j) {
+            for (int ii = 0; ii < gx - 1; ++ii) {
+                int i = istart + ii;
+                int id = idx_fx(i,j,k,L);
+                F.flux_fx_mass[id] = buf[p++]; F.flux_fx_momx[id] = buf[p++]; F.flux_fx_momy[id] = buf[p++]; F.flux_fx_momz[id] = buf[p++]; F.flux_fx_E[id] = buf[p++];
+            }
+        }
+    }
+    assert(p == (int)buf.size());
+}
+inline void pack_y_face_send_halfnode_flux(const Field3D &F, std::vector<double> &buf, int send_left) {
+    const LocalDesc &L = F.L;
+    int gy = L.ngy; // half-node fluxes have one less layer
+    int nx = L.nx, nz = L.nz;
+    int p = 0;
+    int jstart = send_left ? L.ngy : L.ny;
+    for (int k = L.ngz; k < L.ngz + nz; ++k) {
+        for (int i = L.ngx; i < L.ngx + nx; ++i) {
+            for (int jj = 0; jj < gy - 1; ++jj) {
+                int j = jstart + jj;
+                int id = idx_fy(i,j,k,L); // half-node flux index
+                buf[p++] = F.flux_fy_mass[id]; buf[p++] = F.flux_fy_momx[id]; buf[p++] = F.flux_fy_momy[id]; buf[p++] = F.flux_fy_momz[id]; buf[p++] = F.flux_fy_E[id];
+            }
+        }
+    }
+    assert(p == (int)buf.size());
+}
+inline void unpack_y_face_recv_halfnode_flux(Field3D &F, const std::vector<double> &buf, int recv_left) {
+    const LocalDesc &L = F.L;
+    int gy = L.ngy;
+    int nx = L.nx, nz = L.nz;
+    int jstart = recv_left ? 0 : (L.ngy + L.ny);
+    int p = 0;
+    for (int k = L.ngz; k < L.ngz + nz; ++k) {
+        for (int i = L.ngx; i < L.ngx + nx; ++i) {
+            for (int jj = 0; jj < gy - 1; ++jj) {
+                int j = jstart + jj;
+                int id = idx_fy(i,j,k,L);
+                F.flux_fy_mass[id] = buf[p++]; F.flux_fy_momx[id] = buf[p++]; F.flux_fy_momy[id] = buf[p++]; F.flux_fy_momz[id] = buf[p++]; F.flux_fy_E[id] = buf[p++];
+            }
+        }
+    }
+    assert(p == (int)buf.size());
+}
+inline void pack_z_face_send_halfnode_flux(const Field3D &F, std::vector<double> &buf, int send_left) {
+    const LocalDesc &L = F.L;
+    int gz = L.ngz; // half-node fluxes have one less layer
+    int nx = L.nx, ny = L.ny;
+    int p = 0;
+    int kstart = send_left ? L.ngz : L.nz;
+    for (int i = L.ngx; i < L.ngx + nx; ++i) {
+        for (int j = L.ngy; j < L.ngy + ny; ++j) {
+            for (int kk = 0; kk < gz - 1; ++kk) {
+                int k = kstart + kk;
+                int id = idx_fz(i,j,k,L); // half-node flux index
+                buf[p++] = F.flux_fz_mass[id]; buf[p++] = F.flux_fz_momx[id]; buf[p++] = F.flux_fz_momy[id]; buf[p++] = F.flux_fz_momz[id]; buf[p++] = F.flux_fz_E[id];
+            }
+        }
+    }
+    assert(p == (int)buf.size());
+}
+inline void unpack_z_face_recv_halfnode_flux(Field3D &F, const std::vector<double> &buf, int recv_left) {
+    const LocalDesc &L = F.L;
+    int gz = L.ngz;
+    int nx = L.nx, ny = L.ny;
+    int kstart = recv_left ? 0 : (L.ngz + L.nz);
+    int p = 0;
+    for (int i = L.ngx; i < L.ngx + nx; ++i) {
+        for (int j = L.ngy; j < L.ngy + ny; ++j) {
+            for (int kk = 0; kk < gz-1; ++kk) {
+                int k = kstart + kk;
+                int id = idx_fz(i,j,k,L);
+                F.flux_fz_mass[id] = buf[p++]; F.flux_fz_momx[id] = buf[p++]; F.flux_fz_momy[id] = buf[p++]; F.flux_fz_momz[id] = buf[p++]; F.flux_fz_E[id] = buf[p++];
+            }
+        }
+    }
+    assert(p == (int)buf.size());
+}
+
 // High-level halo exchange routine (non-blocking) for gradient fields
 inline void exchange_halos_viscous_flux(Field3D &F, CartDecomp &C, LocalDesc &L, HaloRequests &out_reqs) {
     int gx = L.ngx, gy = L.ngy, gz = L.ngz;
@@ -845,6 +975,69 @@ inline void exchange_halos_physical(Field3D &F, CartDecomp &C, LocalDesc &L, Hal
     unpack_z_face_recv(F, recv_z_back, 1);
     unpack_z_face_recv(F, recv_z_front, 0);
 }
+
+// High-level halo exchange routine (non-blocking) for half-node flux variables
+// This exchanges ghost layers in x, y, z directions. It assumes periodic or neighbor ranks set in LocalDesc.
+inline void exchange_halos_halfnode_flux(Field3D &F, CartDecomp &C, LocalDesc &L, HaloRequests &out_reqs) {
+    // compute buffer sizes
+    int gx = L.ngx - 1, gy = L.ngy - 1, gz = L.ngz - 1; // half-node faces
+    int nx = L.nx, ny = L.ny, nz = L.nz;
+
+    int pack_x_size = gx * ny * nz * 5; // 5 conserved variables
+    int pack_y_size = gy * nx * nz * 5;
+    int pack_z_size = gz * nx * ny * 5;
+
+    std::vector<double> send_x_left(pack_x_size), send_x_right(pack_x_size);
+    std::vector<double> recv_x_left(pack_x_size), recv_x_right(pack_x_size);
+    std::vector<double> send_y_bot(pack_y_size), send_y_top(pack_y_size);
+    std::vector<double> recv_y_bot(pack_y_size), recv_y_top(pack_y_size);
+    std::vector<double> send_z_back(pack_z_size), send_z_front(pack_z_size);
+    std::vector<double> recv_z_back(pack_z_size), recv_z_front(pack_z_size);
+
+    // pack data
+    pack_x_face_send_halfnode_flux(F, send_x_left, 1);
+    pack_x_face_send_halfnode_flux(F, send_x_right, 0);
+    pack_y_face_send_halfnode_flux(F, send_y_bot, 1);
+    pack_y_face_send_halfnode_flux(F, send_y_top, 0);
+    pack_z_face_send_halfnode_flux(F, send_z_back, 1);
+    pack_z_face_send_halfnode_flux(F, send_z_front, 0);
+
+    // non-blocking receives then sends
+    out_reqs.reqs.clear();
+    out_reqs.stats.resize(6);
+    out_reqs.reqs.resize(12);
+
+    int tag = 400;
+    // X-direction
+    MPI_Irecv(recv_x_left.data(), pack_x_size, MPI_DOUBLE, L.nbr_xm, tag, C.cart_comm, &out_reqs.reqs[0]);
+    MPI_Irecv(recv_x_right.data(), pack_x_size, MPI_DOUBLE, L.nbr_xp, tag+1, C.cart_comm, &out_reqs.reqs[1]);
+    MPI_Isend(send_x_right.data(), pack_x_size, MPI_DOUBLE, L.nbr_xp, tag, C.cart_comm, &out_reqs.reqs[2]);
+    MPI_Isend(send_x_left.data(), pack_x_size, MPI_DOUBLE, L.nbr_xm, tag+1, C.cart_comm, &out_reqs.reqs[3]);
+
+    // Y-direction
+    MPI_Irecv(recv_y_bot.data(), pack_y_size, MPI_DOUBLE, L.nbr_ym, tag+2, C.cart_comm, &out_reqs.reqs[4]);
+    MPI_Irecv(recv_y_top.data(), pack_y_size, MPI_DOUBLE, L.nbr_yp, tag+3, C.cart_comm, &out_reqs.reqs[5]);
+    MPI_Isend(send_y_top.data(), pack_y_size, MPI_DOUBLE, L.nbr_yp, tag+2, C.cart_comm, &out_reqs.reqs[6]);
+    MPI_Isend(send_y_bot.data(), pack_y_size, MPI_DOUBLE, L.nbr_ym, tag+3, C.cart_comm, &out_reqs.reqs[7]);
+
+    // Z-direction
+    MPI_Irecv(recv_z_back.data(), pack_z_size, MPI_DOUBLE, L.nbr_zm, tag+4, C.cart_comm, &out_reqs.reqs[8]);
+    MPI_Irecv(recv_z_front.data(), pack_z_size, MPI_DOUBLE, L.nbr_zp, tag+5, C.cart_comm, &out_reqs.reqs[9]);
+    MPI_Isend(send_z_front.data(), pack_z_size, MPI_DOUBLE, L.nbr_zp, tag+4, C.cart_comm, &out_reqs.reqs[10]);
+    MPI_Isend(send_z_back.data(), pack_z_size, MPI_DOUBLE, L.nbr_zm, tag+5, C.cart_comm, &out_reqs.reqs[11]);
+
+    // Wait and unpack sequentially (could be overlapped with interior computation)
+    MPI_Waitall((int)out_reqs.reqs.size(), out_reqs.reqs.data(), MPI_STATUSES_IGNORE);
+
+    // Unpack
+    unpack_x_face_recv_halfnode_flux(F, recv_x_left, 1);
+    unpack_x_face_recv_halfnode_flux(F, recv_x_right, 0);
+    unpack_y_face_recv_halfnode_flux(F, recv_y_bot, 1);
+    unpack_y_face_recv_halfnode_flux(F, recv_y_top, 0);
+    unpack_z_face_recv_halfnode_flux(F, recv_z_back, 1);
+    unpack_z_face_recv_halfnode_flux(F, recv_z_front, 0);
+}
+
 
 // --------------------------- Utilities: initialize cart / local sizes ----------
 

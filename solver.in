@@ -7,29 +7,29 @@ Length_ref      = 1.0
 Density_ref     = 1.0
 Temperature_ref = 1.0
 Velocity_ref    = 1.0
-Re          = 500
+Re          = 1000000
 Ma          = 0.4
 gamma       = 1.4
 Pr          = 0.71
 
 # Time stepping
 cfl         = 0.1
-dt_fixed    = 0.0005
+dt_fixed    = 0.0001
 
 # Reconstruction and schemes
-fvs_type    = LaxFriedrichs     
-recon       = WENO5
-vis_scheme  = C6th
-char_recon  = no
+fvs_type      = LaxFriedrichs     
+interpolation = WENO5
+vis_scheme    = C6th
+char_recon    = no
 
 # MDCD Parameter
 mdcd_disp = 0.0463783
 mdcd_diss = 0.01
 
 # Grid
-global_nx   = 128
-global_ny   = 128
-global_nz   = 128
+global_nx   = 256
+global_ny   = 6
+global_nz   = 6
 
 # Boundary conditions
 # Periodic/Outflow/Wall/
@@ -40,25 +40,25 @@ bc_ymax = Periodic
 bc_zmin = Periodic
 bc_zmax = Periodic
 
-# Optional domain origin
+# Optional domain origin 6.283185307179586
 x0 = 0.0
 y0 = 0.0
 z0 = 0.0
-Lx = 6.283185307179586
-Ly = 6.283185307179586
-Lz = 6.283185307179586
+Lx = 1.0
+Ly = 1.0
+Lz = 1.0
 
 # simulation control
-max_steps = 100000
-monitor_Stepfreq = 100
-output_Timefreq = 0.1
-TotalTime = 5.0
+max_steps = 10
+monitor_Stepfreq = 1
+output_Timefreq = 0.001
+TotalTime = 1.0
 
 # Post-processing
 # Field
 Post_BasicField       = True
 # EnergySpectrum/Turbulence
-IsotropicAnalyse      = True
+IsotropicAnalyse      = False
 # monitor
-monitor_Res           = False
+monitor_Res           = True
 monitor_Energy        = True

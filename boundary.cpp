@@ -203,3 +203,99 @@ void apply_inflow_bc(Field3D &F, const LocalDesc &L, int face)
     if (face==ZMIN) for(int k=0;k<ng;++k)for(int j=0;j<sy;++j)for(int i=0;i<sx;++i) fill(i,j,k);
     if (face==ZMAX) for(int k=sz-ng;k<sz;++k)for(int j=0;j<sy;++j)for(int i=0;i<sx;++i) fill(i,j,k);
 }
+
+void apply_boundary_halfnode_flux(Field3D &F, const GridDesc &G, CartDecomp &C,
+                    const SolverParams &P)
+{
+    LocalDesc &L = F.L;
+    // Step 1: Halo exchange for periodic boundaries
+    HaloRequests reqs;
+    exchange_halos_halfnode_flux(F, C, L, reqs);
+
+    // Step 2: 对每个方向检查是否需要本地边界
+    // Map neighbor -> that side's BC type and FaceID
+    NeighborInfo dirs[6] = {
+        {L.nbr_xm, P.bc_xmin, XMIN}, {L.nbr_xp, P.bc_xmax, XMAX},
+        {L.nbr_ym, P.bc_ymin, YMIN}, {L.nbr_yp, P.bc_ymax, YMAX},
+        {L.nbr_zm, P.bc_zmin, ZMIN}, {L.nbr_zp, P.bc_zmax, ZMAX}
+    };
+
+    for (auto &d : dirs)
+    {
+        if (d.nbr != MPI_PROC_NULL) continue; // 有邻居 → 已由通信完成
+        switch (d.face)
+        {
+            case SolverParams::BCType::Wall:
+                break;
+            case SolverParams::BCType::Symmetry:
+                break;
+            case SolverParams::BCType::Outflow:
+                apply_outflow_bc_halfnode_flux(F, L, d.id);
+                break;
+            case SolverParams::BCType::Inflow:
+                break;
+            case SolverParams::BCType::Periodic:
+                // 周期边界已由通信处理，无需额外操作
+                break;
+        }
+    }
+    
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
+// Outflow boundary condition implementation
+void apply_outflow_bc_halfnode_flux(Field3D &F, const LocalDesc &L, int face)
+{
+    int ngx = L.ngx, ngy = L.ngy, ngz = L.ngz;
+    int sx = L.sx, sy = L.sy, sz = L.sz;
+
+    auto copy_fx=[&](int i1,int j1,int k1,int i2,int j2,int k2){
+        int id1=idx_fx(i1,j1,k1,L), id2=idx_fx(i2,j2,k2,L);
+        F.flux_fx_mass[id1]=F.flux_fx_mass[id2];
+        F.flux_fx_momx[id1]=F.flux_fx_momx[id2];
+        F.flux_fx_momy[id1]=F.flux_fx_momy[id2];
+        F.flux_fx_momz[id1]=F.flux_fx_momz[id2];
+        F.flux_fx_E[id1]=F.flux_fx_E[id2];
+    };
+    auto copy_fy=[&](int i1,int j1,int k1,int i2,int j2,int k2){
+        int id1=idx_fy(i1,j1,k1,L), id2=idx_fy(i2,j2,k2,L);
+        F.flux_fy_mass[id1]=F.flux_fy_mass[id2];
+        F.flux_fy_momx[id1]=F.flux_fy_momx[id2];
+        F.flux_fy_momy[id1]=F.flux_fy_momy[id2];
+        F.flux_fy_momz[id1]=F.flux_fy_momz[id2];
+        F.flux_fy_E[id1]=F.flux_fy_E[id2];
+    };
+    auto copy_fz=[&](int i1,int j1,int k1,int i2,int j2,int k2){
+        int id1=idx_fz(i1,j1,k1,L), id2=idx_fz(i2,j2,k2,L);
+        F.flux_fz_mass[id1]=F.flux_fz_mass[id2];
+        F.flux_fz_momx[id1]=F.flux_fz_momx[id2];
+        F.flux_fz_momy[id1]=F.flux_fz_momy[id2];
+        F.flux_fz_momz[id1]=F.flux_fz_momz[id2];
+        F.flux_fz_E[id1]=F.flux_fz_E[id2];
+    };
+
+    // copy boundary values from interior (use per-axis ghost counts)
+    if (face==XMIN)
+        for(int k=0;k<sz;++k) for(int j=0;j<sy;++j) for(int i=0;i<ngx-1;++i)
+            copy_fx(i,j,k, ngx-1, j, k);
+
+    if (face==XMAX)
+        for(int k=0;k<sz;++k) for(int j=0;j<sy;++j) for(int i=sx-ngx;i<sx-1;++i)
+            copy_fx(i,j,k, sx-ngx-1, j, k);
+
+    if (face==YMIN)
+        for(int k=0;k<sz;++k) for(int j=0;j<ngy-1;++j) for(int i=0;i<sx;++i)
+            copy_fy(i,j,k, i, ngy-1, k);
+
+    if (face==YMAX)
+        for(int k=0;k<sz;++k) for(int j=sy-ngy;j<sy-1;++j) for(int i=0;i<sx;++i)
+            copy_fy(i,j,k, i, sy-ngy-1, k);
+
+    if (face==ZMIN)
+        for(int k=0;k<ngz-1;++k) for(int j=0;j<sy;++j) for(int i=0;i<sx;++i)
+            copy_fz(i,j,k, i, j, ngz-1);
+
+    if (face==ZMAX)
+        for(int k=sz-ngz;k<sz-1;++k) for(int j=0;j<sy;++j) for(int i=0;i<sx;++i)
+            copy_fz(i,j,k, i, j, sz-ngz-1);
+}

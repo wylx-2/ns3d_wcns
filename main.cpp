@@ -60,8 +60,8 @@ int main(int argc, char** argv) {
     // initialize_sod_shock_tube(F, G, P);
     // isotropic turbulence initialization
     // bar_urms_target = 1.0, k0 = 5.0, seed = 12345, rho0 = 1.0, p0 = 1.0
-    init_isotropic_turbulence(F, G, C, P);
-    // initialize_sine_x_field(F, G, P);
+    // init_isotropic_turbulence(F, G, C, P);
+    initialize_sine_x_field(F, G, P);
 
     apply_boundary(F, G, C, P); // apply boundary conditions and holo exchange
     F.primitiveToConserved(P); // update primitive variables (including ghosts)

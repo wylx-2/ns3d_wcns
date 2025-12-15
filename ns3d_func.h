@@ -43,12 +43,34 @@ void apply_symmetry_bc(Field3D &F, const LocalDesc &L, int face_id);
 void apply_outflow_bc(Field3D &F, const LocalDesc &L, int face_id);
 void apply_inflow_bc(Field3D &F, const LocalDesc &L, int face_id);
 
-/// 基础欧拉通量函数
-inline void flux_euler(double rho, double u, double v, double w,
-                double p, double E, double F[5]);
+// 半节点通量边界处理
+void apply_boundary_halfnode_flux(Field3D &F, const GridDesc &G, CartDecomp &C, const SolverParams &P);
+void apply_outflow_bc_halfnode_flux(Field3D &F, const LocalDesc &L, int face_id);
 
-/// 声速
-inline double sound_speed(double gamma, double p, double rho);
+void compute_invis_flux(Field3D &F, const SolverParams &P);
+void WCNS_Riemann_InviscidFlux(std::vector<double> &Fface,
+                             const std::vector<std::vector<double>> &Ut,
+                             const SolverParams &P, int dim);
+void Roe_Riemann_solver(std::vector<double> &Fface,
+                 const std::vector<double> &UL, const std::vector<double> &UR,
+                 double nx, double ny, double nz,
+                 double gamma);
+void Rusanov_Riemann_solver(std::vector<double> &Fface,
+                 const std::vector<double> &UL, const std::vector<double> &UR,
+                 double nx, double ny, double nz,
+                 double gamma);
+void compute_invis_dflux(Field3D &F, const SolverParams &P, const GridDesc &G);
+
+// 插值
+double interpolate_select(const std::vector<double> &vstencil, double flag, const SolverParams P);
+// weno5 插值
+double weno5_interpolate(const std::array<double,6> &stencil);
+// zero 插值
+double zero_interpolate(const std::array<double,2> &stencil);
+// mdcd 插值
+double mdcd_interpolate(const std::array<double,6>& stencil, SolverParams P);
+
+
 
 // 简单的线性重构（标量，2 点模板）
 double linear_reconstruction(const std::array<double,2> &stencil);

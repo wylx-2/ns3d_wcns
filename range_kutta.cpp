@@ -23,7 +23,11 @@ void compute_rhs(Field3D &F, CartDecomp &C, GridDesc &G, SolverParams &P, HaloRe
     std::fill(F.rhs_E.begin(), F.rhs_E.end(), 0.0);
 
     // FVS计算无粘通量
-    computeFVSFluxes(F, P);
+    compute_invis_flux(F, P);
+    // 交换半节点的通量
+    apply_boundary_halfnode_flux(F, G, C, P); //还需要额外边界处理！
+    // The cell-centered compact schemes
+    compute_invis_dflux(F, P, G);
 
     // 计算空间导数
     compute_gradients(F, G);
@@ -34,60 +38,8 @@ void compute_rhs(Field3D &F, CartDecomp &C, GridDesc &G, SolverParams &P, HaloRe
     // 应该在这里交换粘性通量的halo区域，并处理周期边界
     exchange_halos_viscous_flux(F, C, L, out_reqs); //还需要额外边界处理！
 
-    // 粘性通量的导数
+    // 粘性通量的导数，注意这个函数直接在RHS上累加
     compute_vis_flux(F, G);
-
-    // 使用面通量计算 RHS（有限体积散度），只对物理单元计算
-    // dQ/dt = - [ (F_x(i+1/2)-F_x(i-1/2))/dx + (F_y(j+1/2)-F_y(j-1/2))/dy + (F_z(k+1/2)-F_z(k-1/2))/dz ]
-    // loop over physical cells only
-    for (int k = L.ngz; k < L.ngz + L.nz; ++k){
-    for (int j = L.ngy; j < L.ngy + L.ny; ++j){
-    for (int i = L.ngx; i < L.ngx + L.nx; ++i){
-        // mass
-        double fx_r = F.FX_mass(i, j, k);
-        double fx_l = F.FX_mass(i - 1, j, k);
-        double fy_t = F.FY_mass(i, j, k);
-        double fy_b = F.FY_mass(i, j - 1, k);
-        double fz_f = F.FZ_mass(i, j, k);
-        double fz_b = F.FZ_mass(i, j, k - 1);
-        F.RHS_Rho(i, j, k) += -((fx_r - fx_l) * idx + (fy_t - fy_b) * idy + (fz_f - fz_b) * idz);
-
-        // momentum x
-        fx_r = F.FX_momx(i, j, k);
-        fx_l = F.FX_momx(i - 1, j, k);
-        fy_t = F.FY_momx(i, j, k);
-        fy_b = F.FY_momx(i, j - 1, k);
-        fz_f = F.FZ_momx(i, j, k);
-        fz_b = F.FZ_momx(i, j, k - 1);
-        F.RHS_RhoU(i, j, k) += -((fx_r - fx_l) * idx + (fy_t - fy_b) * idy + (fz_f - fz_b) * idz);
-
-        // momentum y
-        fx_r = F.FX_momy(i, j, k);
-        fx_l = F.FX_momy(i - 1, j, k);
-        fy_t = F.FY_momy(i, j, k);
-        fy_b = F.FY_momy(i, j - 1, k);
-        fz_f = F.FZ_momy(i, j, k);
-        fz_b = F.FZ_momy(i, j, k - 1);
-        F.RHS_RhoV(i, j, k) += -((fx_r - fx_l) * idx + (fy_t - fy_b) * idy + (fz_f - fz_b) * idz);
-
-        // momentum z
-        fx_r = F.FX_momz(i, j, k);
-        fx_l = F.FX_momz(i - 1, j, k);
-        fy_t = F.FY_momz(i, j, k);
-        fy_b = F.FY_momz(i, j - 1, k);
-        fz_f = F.FZ_momz(i, j, k);
-        fz_b = F.FZ_momz(i, j, k - 1);
-        F.RHS_RhoW(i, j, k) += -((fx_r - fx_l) * idx + (fy_t - fy_b) * idy + (fz_f - fz_b) * idz);
-
-        // energy
-        fx_r = F.FX_E(i, j, k);
-        fx_l = F.FX_E(i - 1, j, k);
-        fy_t = F.FY_E(i, j, k);
-        fy_b = F.FY_E(i, j - 1, k);
-        fz_f = F.FZ_E(i, j, k);
-        fz_b = F.FZ_E(i, j, k - 1);
-        F.RHS_E(i, j, k) += -((fx_r - fx_l) * idx + (fy_t - fy_b) * idy + (fz_f - fz_b) * idz);
-    }}}
 }
 
 // 三阶 Runge-Kutta 时间推进
