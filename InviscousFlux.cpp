@@ -37,6 +37,7 @@ void compute_invis_flux(Field3D &F, const SolverParams &P)
             for (int i = ngx - 1; i < ngx + nx; ++i) {
                 // dynamic 2D arrays: VAR x stencil
                 std::vector<std::vector<double>> Ut(VAR, std::vector<double>(stencil));
+                std::vector<std::vector<double>> ut(VAR, std::vector<double>(stencil));
 
                 for (int m = 0; m < stencil; ++m) {
                     int ii = i + (m - mid); // 以i为中心的stencil(6点模板为i-2到i+3) when mid=(stencil-1)/2
@@ -47,10 +48,15 @@ void compute_invis_flux(Field3D &F, const SolverParams &P)
                     Ut[2][m] = F.rhov[id];
                     Ut[3][m] = F.rhow[id];
                     Ut[4][m] = F.E[id];
+                    ut[0][m] = F.rho[id];
+                    ut[1][m] = F.u[id];
+                    ut[2][m] = F.v[id];
+                    ut[3][m] = F.w[id];
+                    ut[4][m] = F.p[id];
                 }
 
                 std::vector<double> Fface(VAR, 0.0);
-                WCNS_Riemann_InviscidFlux(Fface, Ut, P, /*dim=*/0);
+                WCNS_Riemann_InviscidFlux(Fface, Ut, ut, P, /*dim=*/0);
 
                 int fid = idx_fx(i, j, k, L);
                 F.flux_fx_mass[fid] = Fface[0];
@@ -68,6 +74,7 @@ void compute_invis_flux(Field3D &F, const SolverParams &P)
             for (int j = ngy - 1; j < ngy + ny; ++j) {
                 // dynamic 2D arrays: VAR x stencil
                 std::vector<std::vector<double>> Ut(VAR, std::vector<double>(stencil));
+                std::vector<std::vector<double>> ut(VAR, std::vector<double>(stencil));
 
                 for (int m = 0; m < stencil; ++m) {
                     int jj = j + (m - mid); // 以j为中心的stencil(6点模板为j-2到j+3) when mid=(stencil-1)/2
@@ -78,10 +85,15 @@ void compute_invis_flux(Field3D &F, const SolverParams &P)
                     Ut[2][m] = F.rhov[id];
                     Ut[3][m] = F.rhow[id];
                     Ut[4][m] = F.E[id];
+                    ut[0][m] = F.rho[id];
+                    ut[1][m] = F.u[id];
+                    ut[2][m] = F.v[id];
+                    ut[3][m] = F.w[id];
+                    ut[4][m] = F.p[id];
                 }
 
                 std::vector<double> Fface(VAR, 0.0);
-                WCNS_Riemann_InviscidFlux(Fface, Ut, P, /*dim=*/1);
+                WCNS_Riemann_InviscidFlux(Fface, Ut, ut, P, /*dim=*/1);
 
                 int fid = idx_fy(i, j, k, L);
                 F.flux_fy_mass[fid] = Fface[0];
@@ -99,6 +111,7 @@ void compute_invis_flux(Field3D &F, const SolverParams &P)
             for (int k = ngz - 1; k < ngz + nz; ++k) {
                 // dynamic 2D arrays: VAR x stencil
                 std::vector<std::vector<double>> Ut(VAR, std::vector<double>(stencil));
+                std::vector<std::vector<double>> ut(VAR, std::vector<double>(stencil));
 
                 for (int m = 0; m < stencil; ++m) {
                     int kk = k + (m - mid); // 以k为中心的stencil(6点模板为k-2到k+3) when mid=(stencil-1)/2
@@ -109,10 +122,15 @@ void compute_invis_flux(Field3D &F, const SolverParams &P)
                     Ut[2][m] = F.rhov[id];
                     Ut[3][m] = F.rhow[id];
                     Ut[4][m] = F.E[id];
+                    ut[0][m] = F.rho[id];
+                    ut[1][m] = F.u[id];
+                    ut[2][m] = F.v[id];
+                    ut[3][m] = F.w[id];
+                    ut[4][m] = F.p[id];
                 }
 
                 std::vector<double> Fface(VAR, 0.0);
-                WCNS_Riemann_InviscidFlux(Fface, Ut, P, /*dim=*/2);
+                WCNS_Riemann_InviscidFlux(Fface, Ut, ut, P, /*dim=*/2);
 
                 int fid = idx_fz(i, j, k, L);
                 F.flux_fz_mass[fid] = Fface[0];
@@ -127,6 +145,7 @@ void compute_invis_flux(Field3D &F, const SolverParams &P)
 
 void WCNS_Riemann_InviscidFlux(std::vector<double> &Fface,
                              const std::vector<std::vector<double>> &Ut,
+                             const std::vector<std::vector<double>> &ut,
                              const SolverParams &P, int dim)
 {
     // alias
@@ -147,6 +166,68 @@ void WCNS_Riemann_InviscidFlux(std::vector<double> &Fface,
     if(sigma)
     {
         // characteristic-wise interpolation
+        // 1.a) compute Roe-averaged state from leftmost and rightmost states in stencil
+        std::vector<std::vector<double>> wchar(VAR, std::vector<double>(stencil));
+        std::vector<std::vector<double>> LU(VAR, std::vector<double>(stencil));
+
+        double Lmat[VAR][VAR], Rmat[VAR][VAR], lambar[VAR];
+        const double ul_L[5] = { ut[0][2], ut[1][2], ut[2][2], ut[3][2], ut[4][2] };
+        const double ur_L[5] = { ut[0][2], ut[1][2], ut[2][2], ut[3][2], ut[4][2] };
+        build_eigen_matrices(ul_L, ur_L, nx, ny, nz, gamma, Lmat, Rmat, lambar);
+        for (int m = 0; m < stencil; ++m) {
+            for (int n = 0; n < VAR; ++n) {
+                double sumLU = 0.0;
+                for (int r = 0; r < VAR; ++r) {
+                    sumLU += Lmat[n][r] * Ut[r][m];
+                }
+                LU[n][m] = sumLU;
+            }
+        }
+
+        std::vector<double> Q_char(VAR, 0.0);
+        for (int n = 0; n < VAR; ++n) {
+            std::vector<double> Qt(stencil);
+            for (int m = 0; m < stencil; ++m) {
+                Qt[m] = LU[n][m];
+            }
+            Q_char[n] = interpolate_select(Qt, +1.0, P);
+        }
+
+        // transform back to conservative flux via Fflux = R * wflux_char
+        for (int n = 0; n < VAR; ++n) {
+            double sum = 0.0;
+            for (int r = 0; r < VAR; ++r) sum += Rmat[n][r] * Q_char[r];
+            UL[n] = sum;
+        }
+
+        // repeat for right state
+        const double ul_R[5] = { ut[0][3], ut[1][3], ut[2][3], ut[3][3], ut[4][3] };
+        const double ur_R[5] = { ut[0][3], ut[1][3], ut[2][3], ut[3][3], ut[4][3] };
+        build_eigen_matrices(ul_R, ur_R, nx, ny, nz, gamma, Lmat, Rmat, lambar); // 这里有冗余，WCNS需要采用所在单元的特征矩阵
+        for (int m = 0; m < stencil; ++m) {
+            for (int n = 0; n < VAR; ++n) {
+                double sumLU = 0.0;
+                for (int r = 0; r < VAR; ++r) {
+                    sumLU += Lmat[n][r] * Ut[r][m];
+                }
+                LU[n][m] = sumLU;
+            }
+        }
+
+        for (int n = 0; n < VAR; ++n) {
+            std::vector<double> Qt(stencil);
+            for (int m = 0; m < stencil; ++m) {
+                Qt[m] = LU[n][m];
+            }
+            Q_char[n] = interpolate_select(Qt, -1.0, P);
+        }
+
+        // transform back to conservative flux via Fflux = R * wflux_char
+        for (int n = 0; n < VAR; ++n) {
+            double sum = 0.0;
+            for (int r = 0; r < VAR; ++r) sum += Rmat[n][r] * Q_char[r];
+            UR[n] = sum;
+        }
     }
     else
     {
@@ -471,30 +552,31 @@ void compute_invis_dflux(Field3D &F, const SolverParams &P, const GridDesc &G)
     for (int i = L.ngx; i < L.ngx + L.nx; ++i){
         // mass
         int id = F.I(i, j, k);
-        F.rhs_rho[id] += diff_x_half(F.flux_fx_mass, i, j, k, G.dx, L);
-        F.rhs_rho[id] += diff_y_half(F.flux_fy_mass, i, j, k, G.dy, L);
-        F.rhs_rho[id] += diff_z_half(F.flux_fz_mass, i, j, k, G.dz, L);
+        F.rhs_rho[id] -= diff_x_half(F.flux_fx_mass, i, j, k, G.dx, L);
+        F.rhs_rho[id] -= diff_y_half(F.flux_fy_mass, i, j, k, G.dy, L);
+        F.rhs_rho[id] -= diff_z_half(F.flux_fz_mass, i, j, k, G.dz, L);
         // momx
-        F.rhs_rhou[id] += diff_x_half(F.flux_fx_momx, i, j, k, G.dx, L);
-        F.rhs_rhou[id] += diff_y_half(F.flux_fy_momx, i, j, k, G.dy, L);
-        F.rhs_rhou[id] += diff_z_half(F.flux_fz_momx, i, j, k, G.dz, L);
+        F.rhs_rhou[id] -= diff_x_half(F.flux_fx_momx, i, j, k, G.dx, L);
+        F.rhs_rhou[id] -= diff_y_half(F.flux_fy_momx, i, j, k, G.dy, L);
+        F.rhs_rhou[id] -= diff_z_half(F.flux_fz_momx, i, j, k, G.dz, L);
         // momy
-        F.rhs_rhov[id] += diff_x_half(F.flux_fx_momy, i, j, k, G.dx, L);
-        F.rhs_rhov[id] += diff_y_half(F.flux_fy_momy, i, j, k, G.dy, L);
-        F.rhs_rhov[id] += diff_z_half(F.flux_fz_momy, i, j, k, G.dz, L);
+        F.rhs_rhov[id] -= diff_x_half(F.flux_fx_momy, i, j, k, G.dx, L);
+        F.rhs_rhov[id] -= diff_y_half(F.flux_fy_momy, i, j, k, G.dy, L);
+        F.rhs_rhov[id] -= diff_z_half(F.flux_fz_momy, i, j, k, G.dz, L);
         // momz
-        F.rhs_rhow[id] += diff_x_half(F.flux_fx_momz, i, j, k, G.dx, L);
-        F.rhs_rhow[id] += diff_y_half(F.flux_fy_momz, i, j, k, G.dy, L);
-        F.rhs_rhow[id] += diff_z_half(F.flux_fz_momz, i, j, k, G.dz, L);
+        F.rhs_rhow[id] -= diff_x_half(F.flux_fx_momz, i, j, k, G.dx, L);
+        F.rhs_rhow[id] -= diff_y_half(F.flux_fy_momz, i, j, k, G.dy, L);
+        F.rhs_rhow[id] -= diff_z_half(F.flux_fz_momz, i, j, k, G.dz, L);
         // energy
-        F.rhs_E[id] += diff_x_half(F.flux_fx_E, i, j, k, G.dx, L);
-        F.rhs_E[id] += diff_y_half(F.flux_fy_E, i, j, k, G.dy, L);
-        F.rhs_E[id] += diff_z_half(F.flux_fz_E, i, j, k, G.dz, L);
+        F.rhs_E[id] -= diff_x_half(F.flux_fx_E, i, j, k, G.dx, L);
+        F.rhs_E[id] -= diff_y_half(F.flux_fy_E, i, j, k, G.dy, L);
+        F.rhs_E[id] -= diff_z_half(F.flux_fz_E, i, j, k, G.dz, L);
     }}}
 
     
     // Debug: 输出沿 x 方向 (j=6, k=6) 的 
-    {
+    bool Debug_Flux_fx_momx = false;
+    if (Debug_Flux_fx_momx){
         int j_probe =  6;
         int k_probe =  6;
 
@@ -517,33 +599,25 @@ void compute_invis_dflux(Field3D &F, const SolverParams &P, const GridDesc &G)
             ofs << i << ' ' << F.flux_fx_momx[id] << '\n';
         }
         ofs.close();
-    }
-
 
     // Debug: 输出沿 x 方向 (j=6, k=6) 的 rhs_rhou 并退出
-    {
-        int j_probe =  6;
-        int k_probe =  6;
-
-        bool in_range = (j_probe >= L.ngy && j_probe < L.ngy + L.ny &&
-                         k_probe >= L.ngz && k_probe < L.ngz + L.nz);
         if (!in_range) {
             std::cerr << "Debug probe (j=6,k=6) is outside computed range.\n";
             std::exit(EXIT_FAILURE);
         }
 
-        std::ofstream ofs("rhs_rhou_j6_k6.dat");
-        if (!ofs) {
+        std::ofstream ofs2("rhs_rhou_j6_k6.dat");
+        if (!ofs2) {
             std::cerr << "Failed to open rhs_rhou_j6_k6.dat for writing.\n";
             std::exit(EXIT_FAILURE);
         }
 
-        ofs << "# i rhs_rhou at j=6 k=6\n";
+        ofs2 << "# i rhs_rhou at j=6 k=6\n";
         for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
             int id = F.I(i, j_probe, k_probe);
-            ofs << i << ' ' << F.rhs_rhou[id] << '\n';
+            ofs2 << i << ' ' << F.rhs_rhou[id] << '\n';
         }
-        ofs.close();
+        ofs2.close();
         std::exit(EXIT_SUCCESS);
     }
 }

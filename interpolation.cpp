@@ -68,11 +68,11 @@ double weno5_interpolate(const std::array<double,6>& stencil){
     double eps = 1e-6;
     double alpha0 = 0.0, alpha1 = 0.0, alpha2 = 0.0;
 
-    double beta0 = 13.0/12.0 * (f0 - 2*f1 + f2)*(f0 - 2*f1 + f2)
+    double beta0 = (f0 - 2*f1 + f2)*(f0 - 2*f1 + f2)
                  + 0.25 * (f0 - 4*f1 + 3*f2)*(f0 - 4*f1 + 3*f2);
-    double beta1 = 13.0/12.0 * (f1 - 2*f2 + f3)*(f1 - 2*f2 + f3)
+    double beta1 = (f1 - 2*f2 + f3)*(f1 - 2*f2 + f3)
                  + 0.25 * (f1 - f3)*(f1 - f3);
-    double beta2 = 13.0/12.0 * (f2 - 2*f3 + f4)*(f2 - 2*f3 + f4)
+    double beta2 = (f2 - 2*f3 + f4)*(f2 - 2*f3 + f4)
                  + 0.25 * (3*f2 - 4*f3 + f4)*(3*f2 - 4*f3 + f4);
 
     alpha0 = (1.0/16.0) / ((eps + beta0)*(eps + beta0));

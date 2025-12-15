@@ -7,38 +7,38 @@ Length_ref      = 1.0
 Density_ref     = 1.0
 Temperature_ref = 1.0
 Velocity_ref    = 1.0
-Re          = 1000000
+Re          = 10000000
 Ma          = 0.4
 gamma       = 1.4
 Pr          = 0.71
 
 # Time stepping
-cfl         = 0.1
-dt_fixed    = 0.0001
+cfl         = 0.2
+dt_fixed    = -0.01
 
 # Reconstruction and schemes
 fvs_type      = LaxFriedrichs     
 interpolation = WENO5
 vis_scheme    = C6th
-char_recon    = no
+char_recon    = yes
 
 # MDCD Parameter
 mdcd_disp = 0.0463783
 mdcd_diss = 0.01
 
 # Grid
-global_nx   = 256
-global_ny   = 6
+global_nx   = 128
+global_ny   = 128
 global_nz   = 6
 
 # Boundary conditions
 # Periodic/Outflow/Wall/
-bc_xmin = Periodic
-bc_xmax = Periodic
-bc_ymin = Periodic
-bc_ymax = Periodic
-bc_zmin = Periodic
-bc_zmax = Periodic
+bc_xmin = Outflow
+bc_xmax = Outflow
+bc_ymin = Outflow
+bc_ymax = Outflow
+bc_zmin = Outflow
+bc_zmax = Outflow
 
 # Optional domain origin 6.283185307179586
 x0 = 0.0
@@ -49,10 +49,10 @@ Ly = 1.0
 Lz = 1.0
 
 # simulation control
-max_steps = 10
-monitor_Stepfreq = 1
-output_Timefreq = 0.001
-TotalTime = 1.0
+max_steps = 10000
+monitor_Stepfreq = 10
+output_Timefreq = 0.1
+TotalTime = 0.8
 
 # Post-processing
 # Field

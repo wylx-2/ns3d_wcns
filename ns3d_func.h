@@ -50,6 +50,7 @@ void apply_outflow_bc_halfnode_flux(Field3D &F, const LocalDesc &L, int face_id)
 void compute_invis_flux(Field3D &F, const SolverParams &P);
 void WCNS_Riemann_InviscidFlux(std::vector<double> &Fface,
                              const std::vector<std::vector<double>> &Ut,
+                             const std::vector<std::vector<double>> &ut,
                              const SolverParams &P, int dim);
 void Roe_Riemann_solver(std::vector<double> &Fface,
                  const std::vector<double> &UL, const std::vector<double> &UR,
