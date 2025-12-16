@@ -80,7 +80,8 @@ bool read_solver_params_from_file(
             else if (v=="laxfriedrichs") P.fvs_type = SolverParams::FVS_Type::LaxFriedrichs;
         }
         else if (k=="interpolation") {
-            if (v=="mdcd") P.interpolation = SolverParams::Interpolation::MDCD;
+            if (v=="mdcd_hybrid") P.interpolation = SolverParams::Interpolation::MDCD_HYBRID;
+            else if (v=="mdcd_linear") P.interpolation = SolverParams::Interpolation::MDCD_LINEAR;
             else if (v=="weno5") P.interpolation = SolverParams::Interpolation::WENO5;
             else if (v=="zero") P.interpolation = SolverParams::Interpolation::ZERO;
         }
@@ -151,21 +152,25 @@ bool read_solver_params_from_file(
     if (P.bc_zmin==SolverParams::BCType::Periodic &&
         P.bc_zmax==SolverParams::BCType::Periodic)
         C.periods[2] = 1;
-    G.dx = G.Lx / (G.global_nx);
-    G.dy = G.Ly / (G.global_ny);
-    G.dz = G.Lz / (G.global_nz);
+    G.dx = G.Lx / (G.global_nx - 1);
+    G.dy = G.Ly / (G.global_ny - 1);
+    G.dz = G.Lz / (G.global_nz - 1);
 
     // 根据重构格式设置ghost层数和stencil大小
-    switch (P.recon) {
-        case SolverParams::Reconstruction::WENO5:
+    switch (P.interpolation) {
+        case SolverParams::Interpolation::WENO5:
             P.ghost_layers = 3;
             P.stencil = 6;
             break;
-        case SolverParams::Reconstruction::LINEAR:
-            P.ghost_layers = 2;
+        case SolverParams::Interpolation::ZERO:
+            P.ghost_layers = 1;
             P.stencil = 2;
             break;
-        case SolverParams::Reconstruction::MDCD:
+        case SolverParams::Interpolation::MDCD_LINEAR:
+            P.ghost_layers = 3;
+            P.stencil = 6;
+            break;
+        case SolverParams::Interpolation::MDCD_HYBRID:
             P.ghost_layers = 3;
             P.stencil = 6;
             break;

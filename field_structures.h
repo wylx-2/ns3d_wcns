@@ -130,7 +130,8 @@ struct SolverParams {
     enum class Interpolation {
         WENO5,     // stencil-based WENO5
         ZERO,      // simple zero-order interpolation 
-        MDCD,      // Minimum Dissipation controlled dispersion
+        MDCD_LINEAR,      // MDCD linear interpolation
+        MDCD_HYBRID       // MDCD hybrid interpolation
     };
     Reconstruction recon = Reconstruction::WENO5;
     Interpolation interpolation = Interpolation::WENO5;

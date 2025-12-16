@@ -39,12 +39,12 @@ int main(int argc, char** argv) {
         }
         std::cout << "  CFL: " << P.cfl << " dt_fixed: " << P.dt_fixed << "\n";
         std::cout << "  if char_recon: " << (P.char_recon ? "true" : "false") << "\n";
-        std::cout << "  Reconstruction: ";
-        switch (P.recon) {
-            case SolverParams::Reconstruction::WENO5: std::cout << "WENO5\n"; break;
-            case SolverParams::Reconstruction::WCNS: std::cout << "WCNS\n"; break;
-            case SolverParams::Reconstruction::LINEAR: std::cout << "LINEAR\n"; break;
-            case SolverParams::Reconstruction::MDCD: std::cout << "MDCD\n"; break;
+        std::cout << "  Interpolation: ";
+        switch (P.interpolation) {
+            case SolverParams::Interpolation::WENO5: std::cout << "WENO5\n"; break;
+            case SolverParams::Interpolation::ZERO: std::cout << "ZERO\n"; break;
+            case SolverParams::Interpolation::MDCD_HYBRID: std::cout << "MDCD_HYBRID\n"; break;
+            case SolverParams::Interpolation::MDCD_LINEAR: std::cout << "MDCD_LINEAR\n"; break;
         }
         std::cout << "  Viscous scheme: ";
         switch (P.vis_scheme) {
@@ -56,11 +56,11 @@ int main(int argc, char** argv) {
     Field3D F; 
     F.allocate(L);
     // initialize_uniform_field(F, G, P);  // Initialize field
-    initialize_riemann_2d(F, G, P);
+    // initialize_riemann_2d(F, G, P);
     // initialize_sod_shock_tube(F, G, P);
     // isotropic turbulence initialization
     // bar_urms_target = 1.0, k0 = 5.0, seed = 12345, rho0 = 1.0, p0 = 1.0
-    // init_isotropic_turbulence(F, G, C, P);
+    init_isotropic_turbulence(F, G, C, P);
     // initialize_sine_x_field(F, G, P);
 
     apply_boundary(F, G, C, P); // apply boundary conditions and holo exchange

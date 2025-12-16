@@ -68,9 +68,10 @@ double interpolate_select(const std::vector<double> &vstencil, double flag, cons
 double weno5_interpolate(const std::array<double,6> &stencil);
 // zero 插值
 double zero_interpolate(const std::array<double,2> &stencil);
-// mdcd 插值
-double mdcd_interpolate(const std::array<double,6>& stencil, SolverParams P);
-
+// mdcd 线性插值
+double mdcd_linear_interpolate(const std::array<double, 6> &stencil, SolverParams P);
+// mdcd 混合插值        
+double mdcd_hybrid_interpolate(const std::array<double, 6> &stencil, SolverParams P);
 
 
 // 简单的线性重构（标量，2 点模板）
