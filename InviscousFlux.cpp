@@ -242,8 +242,8 @@ void WCNS_Riemann_InviscidFlux(std::vector<double> &Fface,
     std::vector<double> FL(VAR, 0.0), FR(VAR, 0.0);
 
     // Riemann solver
-    // Roe_Riemann_solver(Fface, UL, UR, nx, ny, nz, gamma);
-    Rusanov_Riemann_solver(Fface, UL, UR, nx, ny, nz, gamma);
+    Roe_Riemann_solver(Fface, UL, UR, nx, ny, nz, gamma);
+    // Rusanov_Riemann_solver(Fface, UL, UR, nx, ny, nz, gamma);
 }
 
 void Rusanov_Riemann_solver(std::vector<double> &Fface,
