@@ -178,9 +178,9 @@ void compute_viscous_flux(Field3D &F, const SolverParams &P)
         double tau_yz = mu * (F.dv_dz[id] + F.dw_dy[id]);
 
         // 热通量
-        double qx = -mu * Cp / Pr * F.dT_dx[id];
-        double qy = -mu * Cp / Pr * F.dT_dy[id];
-        double qz = -mu * Cp / Pr * F.dT_dz[id];
+        double qx = mu * Cp / Pr * F.dT_dx[id];
+        double qy = mu * Cp / Pr * F.dT_dy[id];
+        double qz = mu * Cp / Pr * F.dT_dz[id];
 
         double u = F.u[id], v = F.v[id], w = F.w[id];
 
