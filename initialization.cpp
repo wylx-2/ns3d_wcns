@@ -152,9 +152,9 @@ bool read_solver_params_from_file(
     if (P.bc_zmin==SolverParams::BCType::Periodic &&
         P.bc_zmax==SolverParams::BCType::Periodic)
         C.periods[2] = 1;
-    G.dx = G.Lx / (G.global_nx - 1);
-    G.dy = G.Ly / (G.global_ny - 1);
-    G.dz = G.Lz / (G.global_nz - 1);
+    G.dx = G.Lx / (G.global_nx);
+    G.dy = G.Ly / (G.global_ny);
+    G.dz = G.Lz / (G.global_nz);
 
     // 根据重构格式设置ghost层数和stencil大小
     switch (P.interpolation) {

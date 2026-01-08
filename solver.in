@@ -20,7 +20,7 @@ dt_fixed    = -0.0005
 fvs_type      = LaxFriedrichs     
 interpolation = MDCD_LINEAR
 vis_scheme    = C6th
-char_recon    = no
+char_recon    = True
 
 # MDCD Parameter
 mdcd_disp = 0.0463783
@@ -51,7 +51,7 @@ Lz = 6.283185307179586
 # simulation control
 max_steps = 10000
 monitor_Stepfreq = 50
-output_Timefreq = 0.5
+output_Timefreq = 1.0
 TotalTime = 5.0
 
 # Post-processing

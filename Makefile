@@ -18,7 +18,7 @@ SRCS = $(wildcard *.cpp)
 OBJS = $(SRCS:.cpp=.o)
 DEPS = $(OBJS:.o=.d)
 
-TARGET = ns3d
+TARGET = ns3d_wcns
 
 .PHONY: all clean run
 

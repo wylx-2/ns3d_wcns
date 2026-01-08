@@ -31,8 +31,8 @@ void generate_full_turbulence(int NX, int NY, int NZ,
 
     std::vector<std::complex<double>> U(N), V(N), W(N);
 
-    int k0 = 6;
-    double A = 0.00055; // 调整该值以控制初始能量
+    int k0 = 8;
+    double A = 0.00013; // 调整该值以控制初始能量
     double Ek0 = 3.0*A/64.0 * std::sqrt(2*PI) * std::pow(k0,5);
     double tao = std::sqrt(32.0/A) * std::pow(2*PI,0.25) * std::pow(k0,-3.5);
 

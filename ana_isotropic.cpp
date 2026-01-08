@@ -7,6 +7,7 @@ static const double PI = 3.14159265358979323846;
 
 struct TurbStats {
     double kinetic_energy = 0.0;   // volume averaged 0.5(u^2+v^2+w^2)
+    double tke = 0.0;              // turbulent kinetic energy 0.5(<u'^2+v'^2+w'^2>)
     double dissipation = 0.0;      // ε
     double u_rms = 0.0;            // rms velocity
     double mean_mu = 0.0;        // mean dynamic viscosity
@@ -223,6 +224,12 @@ void compute_turbulence_statistics(Field3D &F,
     // -------- 2. Compute kinetic energy and RMS --------
     double local_energy=0, global_energy=0;
     double local_urms2=0, global_urms2=0;
+    double local_u_sum=0, global_u_sum=0;
+    double local_v_sum=0, global_v_sum=0;
+    double local_w_sum=0, global_w_sum=0;
+    double local_u2=0, global_u2=0;
+    double local_v2=0, global_v2=0;
+    double local_w2=0, global_w2=0;
     double local_sound_speed=0, global_sound_speed=0;
     double local_dudx2=0, global_dudx2=0;
     double local_mu=0, global_mu=0;
@@ -239,6 +246,8 @@ void compute_turbulence_statistics(Field3D &F,
             double uu=F.u[id], vv=F.v[id], ww=F.w[id];
             local_energy += 0.5*(uu*uu + vv*vv + ww*ww);
             local_urms2 += (uu*uu + vv*vv + ww*ww);
+            local_u_sum += uu; local_v_sum += vv; local_w_sum += ww;
+            local_u2 += uu*uu; local_v2 += vv*vv; local_w2 += ww*ww;
             local_dudx2 += F.du_dx[id]*F.du_dx[id];
             local_sound_speed += std::sqrt(P.gamma * P.Rgas * F.T[id]);
             local_mu += P.get_mu(F.T[id]);
@@ -248,6 +257,12 @@ void compute_turbulence_statistics(Field3D &F,
 
     MPI_Reduce(&local_energy,&global_energy,1,MPI_DOUBLE,MPI_SUM,0,C.cart_comm);
     MPI_Reduce(&local_urms2,&global_urms2,1,MPI_DOUBLE,MPI_SUM,0,C.cart_comm);
+    MPI_Reduce(&local_u_sum,&global_u_sum,1,MPI_DOUBLE,MPI_SUM,0,C.cart_comm);
+    MPI_Reduce(&local_v_sum,&global_v_sum,1,MPI_DOUBLE,MPI_SUM,0,C.cart_comm);
+    MPI_Reduce(&local_w_sum,&global_w_sum,1,MPI_DOUBLE,MPI_SUM,0,C.cart_comm);
+    MPI_Reduce(&local_u2,&global_u2,1,MPI_DOUBLE,MPI_SUM,0,C.cart_comm);
+    MPI_Reduce(&local_v2,&global_v2,1,MPI_DOUBLE,MPI_SUM,0,C.cart_comm);
+    MPI_Reduce(&local_w2,&global_w2,1,MPI_DOUBLE,MPI_SUM,0,C.cart_comm);
     MPI_Reduce(&local_dudx2,&global_dudx2,1,MPI_DOUBLE,MPI_SUM,0,C.cart_comm);
     MPI_Reduce(&local_sound_speed,&global_sound_speed,1,MPI_DOUBLE,MPI_SUM,0,C.cart_comm);
     MPI_Reduce(&local_mu,&global_mu,1,MPI_DOUBLE,MPI_SUM,0,C.cart_comm);
@@ -263,6 +278,13 @@ void compute_turbulence_statistics(Field3D &F,
 
         stats.kinetic_energy = global_energy / double(N);
         stats.u_rms = std::sqrt(global_urms2 / double(3*N));
+        double mean_u = global_u_sum / double(N);
+        double mean_v = global_v_sum / double(N);
+        double mean_w = global_w_sum / double(N);
+        double var_u = global_u2 / double(N) - mean_u*mean_u;
+        double var_v = global_v2 / double(N) - mean_v*mean_v;
+        double var_w = global_w2 / double(N) - mean_w*mean_w;
+        stats.tke = 0.5 * (var_u + var_v + var_w);
         stats.taylor_Li = stats.u_rms / std::sqrt(global_dudx2 / double(N));
         stats.Mach_t = std::sqrt(stats.kinetic_energy*2) / (global_sound_speed / double(N));
         stats.Re_lambda = stats.u_rms * stats.taylor_Li / nu;
@@ -301,12 +323,13 @@ void compute_turbulence_statistics(Field3D &F,
             return;
         }
         if (!exists) {
-            fout << "current_time " << "Kinetic Energy " << "u_rms " << "Dissipation " << "Taylor " << "Kol_scale "
+            fout << "current_time " << "KineticEnergy " << "TKE " << "u_rms " << "Dissipation " << "Taylor " << "Kol_scale "
                  << "Kol_vel " << "Kol_time " << "Taylor_Li " << "Re_lambda " << "Mach_t\n";
         }
         fout << std::scientific << std::setprecision(8)
              << current_time << " "
              << stats.kinetic_energy << " "
+             << stats.tke << " "
              << stats.u_rms << " "
              << stats.dissipation << " "
              << stats.taylor << " "
