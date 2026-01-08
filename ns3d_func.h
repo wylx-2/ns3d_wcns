@@ -34,6 +34,22 @@ void generate_full_turbulence(int NX, int NY, int NZ,
                               std::vector<double> &w);
 void init_isotropic_turbulence(Field3D &F, const GridDesc &G, const CartDecomp &C, const SolverParams &P);
 
+// 从 write_tecplot_field 的 dat 文件恢复初场
+bool initialize_from_tecplot(Field3D &F,
+                             const GridDesc &G,
+                             const CartDecomp &C,
+                             const SolverParams &P,
+                             const std::string &filename);
+// 从 256^3 Tecplot 文件均匀抽样到当前网格并初始化
+bool initialize_from_tecplot_downsample(Field3D &F,
+                                        const GridDesc &G,
+                                        const CartDecomp &C,
+                                        const SolverParams &P,
+                                        const std::string &filename,
+                                        int src_nx = 256,
+                                        int src_ny = 256,
+                                        int src_nz = 256);
+
 // 边界条件处理函数
 void apply_boundary(Field3D &F, GridDesc &G, CartDecomp &C, const SolverParams &P);
 

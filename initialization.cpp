@@ -3,6 +3,7 @@
 #include <cmath>
 #include <iostream>
 #include <fstream>
+#include <vector>
 #include <sstream>
 #include <unordered_map>
 #include <algorithm>
@@ -180,6 +181,167 @@ bool read_solver_params_from_file(
     P.Cp = P.Cv*P.gamma;
     P.Rgas = 1.0/(P.Ma*P.Ma*P.gamma);
     P.mu = 1.0 / P.Re;
+
+    return true;
+}
+
+// 从 write_tecplot_field 生成的 Tecplot dat 文件读取并恢复物理量
+bool initialize_from_tecplot(Field3D &F,
+                             const GridDesc &G,
+                             const CartDecomp &C,
+                             const SolverParams &P,
+                             const std::string &filename)
+{
+    // 假设输入为未分区的全域 Tecplot ASCII（单 ZONE，按 k-j-i 顺序点填充）。
+    // 各 rank 逐行读取并仅保留落在本地物理区间的单元，避免额外通信。
+    std::ifstream fin(filename);
+    if (!fin.is_open()) {
+        std::cerr << "Error: cannot open Tecplot file: " << filename << "\n";
+        return false;
+    }
+
+    // 跳过头部直到 ZONE 行
+    std::string line;
+    while (std::getline(fin, line)) {
+        if (line.rfind("ZONE", 0) == 0) break;
+    }
+
+    const LocalDesc &L = F.L;
+    const int nxg = G.global_nx;
+    const int nyg = G.global_ny;
+    const int nzg = G.global_nz;
+    const long long total_cells = static_cast<long long>(nxg) * nyg * nzg;
+
+    long long idx = 0;
+    int gi = 0, gj = 0, gk = 0;
+    while (idx < total_cells) {
+        double x, y, z, rho, u, v, w, E, p, T;
+        if (!(fin >> x >> y >> z >> rho >> u >> v >> w >> E >> p >> T)) {
+            std::cerr << "Error: Tecplot data lines are fewer than expected when reading " << filename << "\n";
+            return false;
+        }
+
+        // 将全局索引映射到本地物理区
+        if (gi >= L.ox && gi < L.ox + L.nx &&
+            gj >= L.oy && gj < L.oy + L.ny &&
+            gk >= L.oz && gk < L.oz + L.nz) {
+            int li = (gi - L.ox) + L.ngx;
+            int lj = (gj - L.oy) + L.ngy;
+            int lk = (gk - L.oz) + L.ngz;
+            int id = F.I(li, lj, lk);
+
+            F.rho[id]  = rho;
+            F.rhou[id] = rho * u;
+            F.rhov[id] = rho * v;
+            F.rhow[id] = rho * w;
+            F.E[id]    = E;
+
+            F.u[id] = u;
+            F.v[id] = v;
+            F.w[id] = w;
+            F.p[id] = p;
+            F.T[id] = T;
+        }
+
+        // 推进全局计数器（x 最快）
+        ++gi; ++idx;
+        if (gi == nxg) { gi = 0; ++gj; }
+        if (gj == nyg) { gj = 0; ++gk; }
+    }
+
+    return true;
+}
+
+// 从 256^3 Tecplot 文件均匀抽样到 NX×NY×NZ 网格
+bool initialize_from_tecplot_downsample(Field3D &F,
+                                        const GridDesc &G,
+                                        const CartDecomp &C,
+                                        const SolverParams &P,
+                                        const std::string &filename,
+                                        int src_nx,
+                                        int src_ny,
+                                        int src_nz)
+{
+    std::ifstream fin(filename);
+    if (!fin.is_open()) {
+        std::cerr << "Error: cannot open Tecplot file: " << filename << "\n";
+        return false;
+    }
+
+    // 跳过头部直到 ZONE 行
+    std::string line;
+    while (std::getline(fin, line)) {
+        if (line.rfind("ZONE", 0) == 0) break;
+    }
+
+    const LocalDesc &L = F.L;
+    const long long total_src = 1LL * src_nx * src_ny * src_nz;
+
+    // 预生成“源索引 -> 本地单元列表”的映射，按最近邻选取抽样点
+    auto map_index = [](int g, int tgtN, int srcN) {
+        if (tgtN <= 1) return 0;
+        double pos = static_cast<double>(g) * static_cast<double>(srcN) /
+                     static_cast<double>(tgtN);
+        int idx = static_cast<int>(std::llround(pos));
+        return std::clamp(idx, 0, srcN - 1);
+    };
+
+    std::unordered_map<long long, std::vector<int>> src_to_local;
+    src_to_local.reserve(static_cast<size_t>(L.nx * L.ny * L.nz));
+
+    for (int kk = 0; kk < L.nz; ++kk)
+    for (int jj = 0; jj < L.ny; ++jj)
+    for (int ii = 0; ii < L.nx; ++ii) {
+        const int gi = L.ox + ii;
+        const int gj = L.oy + jj;
+        const int gk = L.oz + kk;
+
+        const int si = map_index(gi, G.global_nx, src_nx);
+        const int sj = map_index(gj, G.global_ny, src_ny);
+        const int sk = map_index(gk, G.global_nz, src_nz);
+
+        const long long sidx = (static_cast<long long>(sk) * src_ny + sj) * src_nx + si;
+
+        const int id = F.I(ii + L.ngx, jj + L.ngy, kk + L.ngz);
+        src_to_local[sidx].push_back(id);
+    }
+
+    long long idx = 0;
+    size_t filled = 0;
+    while (idx < total_src) {
+        double x, y, z, rho, u, v, w, E, p, T;
+        if (!(fin >> x >> y >> z >> rho >> u >> v >> w >> E >> p >> T)) {
+            std::cerr << "Error: Tecplot data lines are fewer than expected when reading "
+                      << filename << "\n";
+            return false;
+        }
+
+        auto it = src_to_local.find(idx);
+        if (it != src_to_local.end()) {
+            for (int id : it->second) {
+                F.rho[id]  = rho;
+                F.rhou[id] = rho * u;
+                F.rhov[id] = rho * v;
+                F.rhow[id] = rho * w;
+                F.E[id]    = E;
+
+                F.u[id] = u;
+                F.v[id] = v;
+                F.w[id] = w;
+                F.p[id] = p;
+                F.T[id] = T;
+            }
+            filled += it->second.size();
+        }
+
+        ++idx;
+    }
+
+    if (filled < static_cast<size_t>(L.nx * L.ny * L.nz)) {
+        std::cerr << "Warning: only filled " << filled << " / "
+                  << (static_cast<size_t>(L.nx * L.ny * L.nz))
+                  << " cells while sampling Tecplot file " << filename << "\n";
+    }
 
     return true;
 }
