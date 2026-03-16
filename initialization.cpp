@@ -93,6 +93,12 @@ bool read_solver_params_from_file(
         else if (k=="char_recon") {
             P.char_recon = (v=="yes" || v=="true");
         }
+        else if (k=="riemann_solver") {
+            if (v=="roe") P.riemann_solver = SolverParams::RiemannSolver::Roe;
+            else if (v=="rusanov") P.riemann_solver = SolverParams::RiemannSolver::Rusanov;
+            else if (v=="hllc") P.riemann_solver = SolverParams::RiemannSolver::HLLC;
+            else if (v=="hll") P.riemann_solver = SolverParams::RiemannSolver::HLL;
+        }
         
         else if (k=="mdcd_diss") P.mdcd_diss = std::stod(val);
         else if (k=="mdcd_disp") P.mdcd_disp = std::stod(val);

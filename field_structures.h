@@ -133,6 +133,13 @@ struct SolverParams {
         MDCD_LINEAR,      // MDCD linear interpolation
         MDCD_HYBRID       // MDCD hybrid interpolation
     };
+    enum class RiemannSolver {
+        Roe,
+        Rusanov,
+        HLLC,
+        HLL
+    };
+    RiemannSolver riemann_solver = RiemannSolver::Roe;
     Reconstruction recon = Reconstruction::WENO5;
     Interpolation interpolation = Interpolation::WENO5;
     ViscousScheme vis_scheme = ViscousScheme::C6th;

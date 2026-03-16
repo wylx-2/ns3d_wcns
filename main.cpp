@@ -51,18 +51,25 @@ int main(int argc, char** argv) {
             case SolverParams::ViscousScheme::C6th: std::cout << "6th-order central\n"; break;
             case SolverParams::ViscousScheme::C4th: std::cout << "4th-order central\n"; break;
         }
+        std::cout << "  Riemann solver: ";
+        switch (P.riemann_solver) {
+            case SolverParams::RiemannSolver::Roe: std::cout << "Roe\n"; break;
+            case SolverParams::RiemannSolver::Rusanov: std::cout << "Rusanov\n"; break;
+            case SolverParams::RiemannSolver::HLLC: std::cout << "HLLC\n"; break;
+            case SolverParams::RiemannSolver::HLL: std::cout << "HLL\n"; break;
+        }
     }
 
     Field3D F; 
     F.allocate(L);
     // initialize_uniform_field(F, G, P);  // Initialize field
-    // initialize_riemann_2d(F, G, P);
+    initialize_riemann_2d(F, G, P);
     // initialize_sod_shock_tube(F, G, P);
     // isotropic turbulence initialization
     // bar_urms_target = 1.0, k0 = 5.0, seed = 12345, rho0 = 1.0, p0 = 1.0
     // init_isotropic_turbulence(F, G, C, P);
     // initialize_sine_x_field(F, G, P);
-    initialize_from_tecplot(F, G, C, P, "ILES_field64_tau1.0.dat");
+    // initialize_from_tecplot(F, G, C, P, "ILES_field32_tau1.0.dat");
     // initialize_from_tecplot_downsample(F,G,C,P,"field_tau1.0.dat",256,256,256);
 
     apply_boundary(F, G, C, P); // apply boundary conditions and holo exchange
