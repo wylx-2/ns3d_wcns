@@ -255,6 +255,12 @@ void WCNS_Riemann_InviscidFlux(std::vector<double> &Fface,
         case SolverParams::RiemannSolver::HLL:
             HLL_Riemann_solver(Fface, UL, UR, nx, ny, nz, gamma);
             break;
+        case SolverParams::RiemannSolver::HLLC_p:
+            HLLC_p_Riemann_solver(Fface, UL, UR, nx, ny, nz, gamma);
+            break;
+        default:
+            std::cerr << "Unknown Riemann solver\n";
+            break;
     }
 }
 
@@ -518,9 +524,9 @@ void HLLC_Riemann_solver(std::vector<double> &Fface,
     }
 
     // 计算中间压力 p* (取左右平均值以提高对称性)
-    double p_starL = pL + rhoL * (unL - SL) * (unL - SM);
-    double p_starR = pR + rhoR * (unR - SR) * (unR - SM);
-    double p_star  = 0.5 * (p_starL + p_starR);
+    // double p_starL = pL + rhoL * (unL - SL) * (unL - SM);
+    // double p_starR = pR + rhoR * (unR - SR) * (unR - SM);
+    // double p_star  = 0.5 * (p_starL + p_starR);
 
     // -----------------------------------------------------------------
     // 根据接触波位置判断区域，并构造相应的中间通量 F*L 或 F*R
@@ -580,6 +586,131 @@ void HLLC_Riemann_solver(std::vector<double> &Fface,
             Fface[i] = FR[i] + SR * (U_star_R[i] - UR[i]);
         }
     }
+}
+
+void HLLC_p_Riemann_solver(std::vector<double> &Fface,
+                 const std::vector<double> &UL, const std::vector<double> &UR,
+                 double nx, double ny, double nz,
+                 double gamma)
+{
+    // HLLC Riemann solver with pressure-based contact wave speed estimation
+    // 该函数实现与 HLLC_Riemann_solver 类似，但接触波速度 SM 的估计改为基于压力的公式
+    // 提取左右原始变量
+    double rhoL = UL[0];
+    double uL   = UL[1] / rhoL;
+    double vL   = UL[2] / rhoL;
+    double wL   = UL[3] / rhoL;
+    double EL   = UL[4];
+    double pL   = (EL - 0.5 * rhoL * (uL*uL + vL*vL + wL*wL)) * (gamma - 1.0);
+    double aL   = std::sqrt(gamma * pL / rhoL);
+
+    double rhoR = UR[0];
+    double uR   = UR[1] / rhoR;
+    double vR   = UR[2] / rhoR;
+    double wR   = UR[3] / rhoR;
+    double ER   = UR[4];
+    double pR   = (ER - 0.5 * rhoR * (uR*uR + vR*vR + wR*wR)) * (gamma - 1.0);
+    double aR   = std::sqrt(gamma * pR / rhoR);
+
+    // 法向速度
+    double unL = uL*nx + vL*ny + wL*nz;
+    double unR = uR*nx + vR*ny + wR*nz;
+
+    // 计算左右通量 FL, FR
+    double FL[5], FR[5];
+    FL[0] = rhoL * unL;
+    FL[1] = rhoL * uL * unL + pL * nx;
+    FL[2] = rhoL * vL * unL + pL * ny;
+    FL[3] = rhoL * wL * unL + pL * nz;
+    FL[4] = (EL + pL) * unL;
+
+    FR[0] = rhoR * unR;
+    FR[1] = rhoR * uR * unR + pR * nx;
+    FR[2] = rhoR * vR * unR + pR * ny;
+    FR[3] = rhoR * wR * unR + pR * nz;
+    FR[4] = (ER + pR) * unR;
+
+    // 压强估计
+    double p_star = 0.5 * (pL + pR) - 0.125 * (unR - unL) * (rhoL + rhoR) * (aL + aR);
+    p_star = std::max(0.0, p_star); // 保持非负压力
+
+    // 波速估计(Toro)
+    double SL, SR;
+    if (p_star <= pL) {
+        SL = unL - aL;
+    } else {
+        SL = unL - aL * std::sqrt((gamma+1.0)*p_star/(2.0*gamma*pL) + (gamma-1.0)/(2.0*gamma));
+    }
+    if (p_star <= pR) {
+        SR = unR + aR;
+    } else {
+        SR = unR + aR * std::sqrt((gamma+1.0)*p_star/(2.0*gamma*pR) + (gamma-1.0)/(2.0*gamma));
+    }
+
+    if (SL >= 0.0) {
+        for (int i = 0; i < 5; ++i) Fface[i] = FL[i];
+        return;
+    }
+    if (SR <= 0.0) {
+        for (int i = 0; i < 5; ++i) Fface[i] = FR[i];
+        return;
+    }
+
+    double SM = (pR - pL + rhoL*unL*(SL - unL) - rhoR*unR*(SR - unR)) / (rhoL*(SL - unL) - rhoR*(SR - unR));
+    if (SM >= 0.0) {
+        double rho_star_L = rhoL * (SL - unL) / (SL - SM);
+
+        // 左侧切向速度保持不变
+        double utxL = uL - unL * nx;
+        double utyL = vL - unL * ny;
+        double utzL = wL - unL * nz;
+
+        double u_starL_x = SM * nx + utxL;
+        double u_starL_y = SM * ny + utyL;
+        double u_starL_z = SM * nz + utzL;
+
+        // 中间状态总能量 (源自 Rankine-Hugoniot 关系)
+        // double E_star_L = ((SL - unL) * EL - pL * unL + p_star * SM) / (SL - SM);
+        double E_star_L = EL/rhoL + (SM - unL) * (SM + pL/(rhoL*(SL - unL)));
+
+        double U_star_L[5] = {rho_star_L,
+                              rho_star_L * u_starL_x,
+                              rho_star_L * u_starL_y,
+                              rho_star_L * u_starL_z,
+                              rho_star_L * E_star_L};
+
+        // F*L = FL + SL * (U*L - UL)
+        for (int i = 0; i < 5; ++i) {
+            Fface[i] = FL[i] + SL * (U_star_L[i] - UL[i]);
+        }
+    }
+    else { // SM < 0.0
+        // 接触波与右波之间 (SM <= 0 <= SR)：采用 F*R
+        double rho_star_R = rhoR * (SR - unR) / (SR - SM);
+
+        double utxR = uR - unR * nx;
+        double utyR = vR - unR * ny;
+        double utzR = wR - unR * nz;
+
+        double u_starR_x = SM * nx + utxR;
+        double u_starR_y = SM * ny + utyR;
+        double u_starR_z = SM * nz + utzR;
+
+        // double E_star_R = ((SR - unR) * ER - pR * unR + p_star * SM) / (SR - SM);
+        double E_star_R = ER/rhoR + (SM - unR) * (SM + pR/(rhoR*(SR - unR)));
+
+        double U_star_R[5] = {rho_star_R,
+                              rho_star_R * u_starR_x,
+                              rho_star_R * u_starR_y,
+                              rho_star_R * u_starR_z,
+                              rho_star_R * E_star_R};
+
+        // F*R = FR + SR * (U*R - UR)
+        for (int i = 0; i < 5; ++i) {
+            Fface[i] = FR[i] + SR * (U_star_R[i] - UR[i]);
+        }
+    }
+
 }
 
 // Roe平均

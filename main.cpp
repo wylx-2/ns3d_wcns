@@ -57,6 +57,7 @@ int main(int argc, char** argv) {
             case SolverParams::RiemannSolver::Rusanov: std::cout << "Rusanov\n"; break;
             case SolverParams::RiemannSolver::HLLC: std::cout << "HLLC\n"; break;
             case SolverParams::RiemannSolver::HLL: std::cout << "HLL\n"; break;
+            case SolverParams::RiemannSolver::HLLC_p: std::cout << "HLLC_p\n"; break;
         }
     }
 

@@ -21,7 +21,7 @@ fvs_type       = LaxFriedrichs
 interpolation  = WENO5
 vis_scheme     = C6th
 char_recon     = False
-Riemann_Solver = HLLC
+Riemann_Solver = HLLC_h
 
 # MDCD Parameter
 mdcd_disp = 0.0463783

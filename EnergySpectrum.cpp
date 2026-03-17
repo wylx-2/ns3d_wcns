@@ -4,6 +4,7 @@
 #include <complex>
 #include <iostream>
 #include <fstream>
+#include <iomanip>
 #include <fftw3.h>
 #include "field_structures.h"
 
@@ -117,7 +118,7 @@ void compute_energy_spectrum_rank0(
         int k2 = (j <= NY/2 ? j : j-NY);
         int k3 = (k <= NZ/2 ? k : k-NZ);
 
-        int kk = (int) std::sqrt(1.0*(k1*k1 + k2*k2 + k3*k3)) + 0.5;
+        int kk = static_cast<int>(std::lround(std::sqrt(1.0*(k1*k1 + k2*k2 + k3*k3))));
         // int id = (i*NY + j)*NZ + k;
         int id = (k*NY + j)*NX + i;
         Ek[kk] += Er[id];
@@ -126,6 +127,7 @@ void compute_energy_spectrum_rank0(
 
     // --- Output to file ---
     std::ofstream fout(filename);
+    fout << std::scientific << std::setprecision(16);
     for(int k=0; k<=Kmax; k++)
     {
         fout << k << " " << Ek[k] << "\n";

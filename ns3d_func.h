@@ -80,6 +80,10 @@ void HLLC_Riemann_solver(std::vector<double> &Fface,
                  const std::vector<double> &UL, const std::vector<double> &UR,
                  double nx, double ny, double nz,
                  double gamma);
+void HLLC_p_Riemann_solver(std::vector<double> &Fface,
+                 const std::vector<double> &UL, const std::vector<double> &UR,
+                 double nx, double ny, double nz,
+                 double gamma);
 void HLL_Riemann_solver(std::vector<double> &Fface,
                  const std::vector<double> &UL, const std::vector<double> &UR,
                  double nx, double ny, double nz,
