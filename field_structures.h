@@ -138,7 +138,8 @@ struct SolverParams {
         Rusanov,
         HLLC,
         HLL,
-        HLLC_p
+        HLLC_p,
+        AUSM
     };
     RiemannSolver riemann_solver = RiemannSolver::Roe;
     Reconstruction recon = Reconstruction::WENO5;

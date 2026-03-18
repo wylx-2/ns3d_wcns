@@ -258,6 +258,9 @@ void WCNS_Riemann_InviscidFlux(std::vector<double> &Fface,
         case SolverParams::RiemannSolver::HLLC_p:
             HLLC_p_Riemann_solver(Fface, UL, UR, nx, ny, nz, gamma);
             break;
+        case SolverParams::RiemannSolver::AUSM:
+            AUSM_Riemann_solver(Fface, UL, UR, nx, ny, nz, gamma);
+            break;
         default:
             std::cerr << "Unknown Riemann solver\n";
             break;
@@ -711,6 +714,135 @@ void HLLC_p_Riemann_solver(std::vector<double> &Fface,
         }
     }
 
+}
+
+void AUSM_Riemann_solver(std::vector<double> &Fface,
+                    const std::vector<double> &UL,
+                    const std::vector<double> &UR,
+                    double nx, double ny, double nz,
+                    double gamma)
+{
+    const int VAR = 5;
+    const double Kp = 0.25;
+    const double Ku = 0.75;
+
+    // =========================
+    // 1. 左右状态
+    // =========================
+    double rho_L = UL[0];
+    double u_L = UL[1] / rho_L;
+    double v_L = UL[2] / rho_L;
+    double w_L = UL[3] / rho_L;
+    double E_L = UL[4];
+
+    double p_L = (E_L - 0.5 * rho_L * (u_L*u_L + v_L*v_L + w_L*w_L)) * (gamma - 1.0);
+    p_L = std::max(p_L, 1e-12);
+
+    double a_L = std::sqrt(gamma * p_L / rho_L);
+    double H_L = (E_L + p_L) / rho_L;
+
+    double rho_R = UR[0];
+    double u_R = UR[1] / rho_R;
+    double v_R = UR[2] / rho_R;
+    double w_R = UR[3] / rho_R;
+    double E_R = UR[4];
+
+    double p_R = (E_R - 0.5 * rho_R * (u_R*u_R + v_R*v_R + w_R*w_R)) * (gamma - 1.0);
+    p_R = std::max(p_R, 1e-12);
+
+    double a_R = std::sqrt(gamma * p_R / rho_R);
+    double H_R = (E_R + p_R) / rho_R;
+
+    // =========================
+    // 2. 法向速度
+    // =========================
+    double un_L = u_L*nx + v_L*ny + w_L*nz;
+    double un_R = u_R*nx + v_R*ny + w_R*nz;
+
+    // =========================
+    // 3. 界面平均声速
+    // =========================
+    double a_bar = 0.5 * (a_L + a_R);
+    double rho_bar = 0.5 * (rho_L + rho_R);
+
+    // =========================
+    // 马赫数
+    // =========================
+    double ML = un_L / a_bar;
+    double MR = un_R / a_bar;
+    double M_bar2 = (un_L*un_L + un_R*un_R) / (2.0*a_bar*a_bar); // 平均马赫数的平方
+    double M_o2 = std::min(1.0, std::max(M_bar2, 0.5));  // 原始公式还包括远场马赫数
+    double f_a = M_o2 * (2.0 - M_o2); // 平滑函数，控制亚音速区域的修正强度
+
+    auto M4_plus = [](double M) {
+        if (std::abs(M) >= 1.0)
+            return 0.5 * (M + std::abs(M));
+        else
+            return 0.25 * (M + 1.0)*(M + 1.0); // *(1 + 0.5 * (M - 1.0)*(M - 1.0)); 
+    };
+
+    auto M4_minus = [](double M) {
+        if (std::abs(M) >= 1.0)
+            return 0.5 * (M - std::abs(M));
+        else
+            return -0.25 * (M - 1.0)*(M - 1.0); //*(1 + 0.5 * (M + 1.0)*(M + 1.0));
+    };
+
+    double Mp = M4_plus(ML);
+    double Mm = M4_minus(MR);
+
+    // =========================
+    // 质量通量
+    // =========================
+    double M_half = Mp + Mm - Kp/f_a*std::max(1.0 - M_bar2, 0.0) * ((p_R - p_L) / (rho_bar * a_bar * a_bar));
+    double m_dot = a_bar * M_half * (M_half >= 0.0 ? rho_L : rho_R); // 质量通量，迎风选择
+
+    // =========================
+    // 压力分裂
+    // =========================
+    auto P5_plus = [](double M) {
+        if (std::abs(M) >= 1.0)
+            return 0.5* (1.0 + (M > 0 ? 1.0 : -1.0));
+        else
+            return 0.25 * (M + 1.0)*(M + 1.0)*(2.0 - M);
+    };
+
+    auto P5_minus = [](double M) {
+        if (std::abs(M) >= 1.0)
+            return 0.5* (1.0 - (M > 0 ? 1.0 : -1.0));
+        else
+            return 0.25 * (M - 1.0)*(M - 1.0)*(2.0 + M);
+    };
+
+    double p_half_plus = P5_plus(ML);
+    double p_half_minus = P5_minus(MR);
+    double p_half = p_half_plus * p_L + p_half_minus * p_R - Ku * p_half_minus * p_half_plus * (rho_L + rho_R) * f_a * (u_R - u_L) * a_bar;
+
+    // =========================
+    // 8. 上风选择
+    // =========================
+    double u_face, v_face, w_face, H_face;
+
+    if (m_dot >= 0.0) {
+        u_face = u_L;
+        v_face = v_L;
+        w_face = w_L;
+        H_face = H_L;
+    } else {
+        u_face = u_R;
+        v_face = v_R;
+        w_face = w_R;
+        H_face = H_R;
+    }
+
+    // =========================
+    // 9. 构造通量
+    // =========================
+    Fface[0] = m_dot;
+    Fface[1] = m_dot * u_face + p_half * nx;
+    Fface[2] = m_dot * v_face + p_half * ny;
+    Fface[3] = m_dot * w_face + p_half * nz;
+    Fface[4] = m_dot * H_face;
 }
 
 // Roe平均

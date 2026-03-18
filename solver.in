@@ -21,7 +21,7 @@ fvs_type       = LaxFriedrichs
 interpolation  = WENO5
 vis_scheme     = C6th
 char_recon     = False
-Riemann_Solver = Rusanov
+Riemann_Solver = AUSM
 
 # MDCD Parameter
 mdcd_disp = 0.0463783
@@ -53,7 +53,7 @@ Lz = 1.0
 max_steps = 10000
 monitor_Stepfreq = 10
 output_Timefreq = 0.1
-TotalTime = 0.001
+TotalTime = 0.3
 
 # Post-processing
 # Field

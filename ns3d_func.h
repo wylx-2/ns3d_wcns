@@ -88,6 +88,10 @@ void HLL_Riemann_solver(std::vector<double> &Fface,
                  const std::vector<double> &UL, const std::vector<double> &UR,
                  double nx, double ny, double nz,
                  double gamma);
+void AUSM_Riemann_solver(std::vector<double> &Fface,
+                 const std::vector<double> &UL, const std::vector<double> &UR,
+                 double nx, double ny, double nz,
+                 double gamma);
 void compute_invis_dflux(Field3D &F, const SolverParams &P, const GridDesc &G);
 
 // 插值
