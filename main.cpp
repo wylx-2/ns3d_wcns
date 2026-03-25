@@ -60,19 +60,40 @@ int main(int argc, char** argv) {
             case SolverParams::RiemannSolver::HLLC_p: std::cout << "HLLC_p\n"; break;
             case SolverParams::RiemannSolver::AUSM: std::cout << "AUSM\n"; break;
         }
+        std::cout << "  if restart: " << (P.restart ? "true" : "false") << ", restart_file: " << P.restart_file << "\n";
     }
 
     Field3D F; 
     F.allocate(L);
-    // initialize_uniform_field(F, G, P);  // Initialize field
-    initialize_riemann_2d(F, G, P);
-    // initialize_sod_shock_tube(F, G, P);
-    // isotropic turbulence initialization
-    // bar_urms_target = 1.0, k0 = 5.0, seed = 12345, rho0 = 1.0, p0 = 1.0
-    // init_isotropic_turbulence(F, G, C, P);
-    // initialize_sine_x_field(F, G, P);
-    // initialize_from_tecplot(F, G, C, P, "ILES_field32_tau1.0.dat");
-    // initialize_from_tecplot_downsample(F,G,C,P,"field_tau1.0.dat",256,256,256);
+    // keep original initialization path; only switch to HDF5 when restart is enabled.
+    if (P.restart) {
+        const std::string &h5_file = P.restart_file;
+        bool init_ok = initialize_from_hdf5(F, G, C, P, h5_file);
+        if (!init_ok) {
+            if (C.rank == 0) {
+                std::cerr << "Restart initialization from HDF5 failed, file='"
+                          << h5_file << "'\n";
+            }
+            MPI_Finalize();
+            return 1;
+        }
+        if (C.rank == 0) {
+            std::cout << "Restart initialization loaded from HDF5: " << h5_file << "\n";
+        }
+    } else {
+        // initialize_uniform_field(F, G, P);  // Initialize field
+        initialize_riemann_2d(F, G, P);
+        // initialize_sod_shock_tube(F, G, P);
+        // isotropic turbulence initialization
+        // bar_urms_target = 1.0, k0 = 5.0, seed = 12345, rho0 = 1.0, p0 = 1.0
+        // init_isotropic_turbulence(F, G, C, P);
+        // initialize_sine_x_field(F, G, P);
+        // initialize_from_tecplot(F, G, C, P, "ILES_field32_tau1.0.dat");
+        // initialize_from_tecplot_downsample(F,G,C,P,"field_tau1.0.dat",256,256,256);
+        if (C.rank == 0) {
+            std::cout << "Initialized with built-in initialization function (restart=false)\n";
+        }
+    }
 
     apply_boundary(F, G, C, P); // apply boundary conditions and holo exchange
     F.primitiveToConserved(P); // update primitive variables (including ghosts)

@@ -9,10 +9,15 @@ LDFLAGS =
 
 # Local FFTW (with MPI) install prefix. Override externally if needed.
 FFTW_PREFIX ?= /home/huangwz/third_party/fftw-mpi
+HDF5_PREFIX ?= /home/huangwz_lab/library/local/hdf5-2.1.0-parallel
 
 # Add FFTW include/lib paths and link flags (rpath so runtime can find libs).
 CXXFLAGS += -I$(FFTW_PREFIX)/include
 LDFLAGS += -L$(FFTW_PREFIX)/lib -lfftw3_mpi -lfftw3 -lm -Wl,-rpath,$(FFTW_PREFIX)/lib
+
+# HDF5 output support
+CXXFLAGS += -I$(HDF5_PREFIX)/include
+LDFLAGS += -L$(HDF5_PREFIX)/lib -lhdf5_hl -lhdf5 -Wl,-rpath,$(HDF5_PREFIX)/lib
 
 SRCS = $(wildcard *.cpp)
 OBJS = $(SRCS:.cpp=.o)

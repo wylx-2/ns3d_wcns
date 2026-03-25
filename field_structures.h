@@ -26,6 +26,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 // --------------------------- Grid and decomposition -------------------------
 
@@ -172,6 +173,12 @@ struct SolverParams {
     // output/post-processing flags
     bool post_basicfield = true;
     bool isotropic_analyse = true;
+
+    // initialization control from solver.in
+    // restart switch: if true, initialize from HDF5 restart file.
+    bool restart = false;
+    // restart file path (HDF5)
+    std::string restart_file = "field.h5";
 
     // monitor switches
     bool monitor_res = true;

@@ -7,6 +7,8 @@
 #include <sstream>
 #include <unordered_map>
 #include <algorithm>
+#include <hdf5.h>
+#include <H5FDmpio.h>
 
 // 去掉字符串两端空格
 static inline std::string trim(const std::string& s)
@@ -28,7 +30,7 @@ static inline std::string lower(const std::string &s)
 static inline bool parse_bool(const std::string &v)
 {
     std::string lv = lower(v);
-    return (lv == "true" || lv == "yes" || lv == "1" || lv == "on");
+    return (lv == "true" || lv == "ture" || lv == "yes" || lv == "1" || lv == "on");
 }
 
 bool read_solver_params_from_file(
@@ -123,6 +125,10 @@ bool read_solver_params_from_file(
         else if (k=="monitor_stepfreq") P.monitor_Stepfreq = std::stoi(val);
         else if (k=="output_timefreq") P.output_Timefreq = std::stod(val);
         else if (k=="totaltime") P.TotalTime = std::stod(val);
+
+        // ---- initialization source ----
+        else if (k=="restart") P.restart = parse_bool(val);
+        else if (k=="restart_file") P.restart_file = val;
 
         // ---- 边界条件 ----
         auto parse_bc = [&](const std::string &v) {
@@ -260,6 +266,159 @@ bool initialize_from_tecplot(Field3D &F,
     return true;
 }
 
+// 从并行 HDF5 流场文件（write_tecplot_field 生成的 field.h5）恢复初场
+bool initialize_from_hdf5(Field3D &F,
+                          const GridDesc &G,
+                          const CartDecomp &C,
+                          const SolverParams &P,
+                          const std::string &filename)
+{
+    (void)P;
+
+#ifdef H5_HAVE_PARALLEL
+    const LocalDesc &L = F.L;
+    const hsize_t local_dims[3] = {
+        static_cast<hsize_t>(L.nz),
+        static_cast<hsize_t>(L.ny),
+        static_cast<hsize_t>(L.nx)
+    };
+    const hsize_t start[3] = {
+        static_cast<hsize_t>(L.oz),
+        static_cast<hsize_t>(L.oy),
+        static_cast<hsize_t>(L.ox)
+    };
+    const std::size_t npts = static_cast<std::size_t>(L.nx) * static_cast<std::size_t>(L.ny) * static_cast<std::size_t>(L.nz);
+
+    std::vector<double> rho(npts), u(npts), v(npts), w(npts), E(npts), p(npts), T(npts);
+
+    hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
+    if (fapl < 0) {
+        std::cerr << "Failed to create HDF5 file access property list\n";
+        return false;
+    }
+
+    herr_t ierr = H5Pset_fapl_mpio(fapl, C.cart_comm, MPI_INFO_NULL);
+    if (ierr < 0) {
+        std::cerr << "Failed to set HDF5 MPI-IO file access property\n";
+        H5Pclose(fapl);
+        return false;
+    }
+
+    hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, fapl);
+    H5Pclose(fapl);
+    if (file < 0) {
+        std::cerr << "Failed to open HDF5 file: " << filename << "\n";
+        return false;
+    }
+
+    hid_t memspace = H5Screate_simple(3, local_dims, nullptr);
+    if (memspace < 0) {
+        std::cerr << "Failed to create HDF5 memory dataspace\n";
+        H5Fclose(file);
+        return false;
+    }
+
+    hid_t xfer = H5Pcreate(H5P_DATASET_XFER);
+    if (xfer < 0) {
+        std::cerr << "Failed to create HDF5 transfer property list\n";
+        H5Sclose(memspace);
+        H5Fclose(file);
+        return false;
+    }
+
+    ierr = H5Pset_dxpl_mpio(xfer, H5FD_MPIO_COLLECTIVE);
+    if (ierr < 0) {
+        std::cerr << "Failed to set collective MPI-IO transfer mode for read\n";
+        H5Pclose(xfer);
+        H5Sclose(memspace);
+        H5Fclose(file);
+        return false;
+    }
+
+    auto read_dataset = [&](const char *name, std::vector<double> &data) -> bool {
+        hid_t dset = H5Dopen2(file, name, H5P_DEFAULT);
+        if (dset < 0) {
+            std::cerr << "Failed to open dataset '" << name << "' in " << filename << "\n";
+            return false;
+        }
+
+        hid_t filespace = H5Dget_space(dset);
+        if (filespace < 0) {
+            H5Dclose(dset);
+            std::cerr << "Failed to get filespace for dataset '" << name << "'\n";
+            return false;
+        }
+
+        herr_t ierr_local = H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, local_dims, nullptr);
+        if (ierr_local < 0) {
+            H5Sclose(filespace);
+            H5Dclose(dset);
+            std::cerr << "Failed to select hyperslab for dataset '" << name << "'\n";
+            return false;
+        }
+
+        ierr_local = H5Dread(dset, H5T_NATIVE_DOUBLE, memspace, filespace, xfer, data.data());
+        H5Sclose(filespace);
+        H5Dclose(dset);
+        if (ierr_local < 0) {
+            std::cerr << "Failed to read dataset '" << name << "'\n";
+            return false;
+        }
+        return true;
+    };
+
+    bool ok = true;
+    ok = ok && read_dataset("rho", rho);
+    ok = ok && read_dataset("u", u);
+    ok = ok && read_dataset("v", v);
+    ok = ok && read_dataset("w", w);
+    ok = ok && read_dataset("E", E);
+    ok = ok && read_dataset("p", p);
+    ok = ok && read_dataset("T", T);
+
+    H5Pclose(xfer);
+    H5Sclose(memspace);
+    H5Fclose(file);
+
+    if (!ok) {
+        return false;
+    }
+
+    for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const std::size_t lid = static_cast<std::size_t>(k - L.ngz) * static_cast<std::size_t>(L.ny) * static_cast<std::size_t>(L.nx)
+                    + static_cast<std::size_t>(j - L.ngy) * static_cast<std::size_t>(L.nx)
+                    + static_cast<std::size_t>(i - L.ngx);
+                const int id = F.I(i, j, k);
+
+                F.rho[id] = rho[lid];
+                F.rhou[id] = rho[lid] * u[lid];
+                F.rhov[id] = rho[lid] * v[lid];
+                F.rhow[id] = rho[lid] * w[lid];
+                F.E[id] = E[lid];
+
+                F.u[id] = u[lid];
+                F.v[id] = v[lid];
+                F.w[id] = w[lid];
+                F.p[id] = p[lid];
+                F.T[id] = T[lid];
+            }
+        }
+    }
+
+    return true;
+#else
+    if (C.rank == 0) {
+        std::cerr << "Parallel HDF5 is required for initialize_from_hdf5, but this build is serial HDF5\n";
+    }
+    (void)F;
+    (void)G;
+    (void)filename;
+    return false;
+#endif
+}
+
 // 从 256^3 Tecplot 文件均匀抽样到 NX×NY×NZ 网格
 bool initialize_from_tecplot_downsample(Field3D &F,
                                         const GridDesc &G,
@@ -379,16 +538,20 @@ void initialize_riemann_2d(Field3D &F, const GridDesc &G, const SolverParams &P)
 
                 // ========= 四象限 Riemann ===============
                 if (x >= x_mid && y >= y_mid) {          // 区域 I
-                    rho = 1.5;     u = 0.0;     v = 0.0;     p = 1.5;
+                    //rho = 1.5;     u = 0.0;     v = 0.0;     p = 1.5;
+                    rho = 1.1;     u = 0.0;     v = 0.0;     p = 1.1;
                 }
                 else if (x < x_mid && y >= y_mid) {      // 区域 II
-                    rho = 0.5323;  u = 1.206;   v = 0.0;     p = 0.3;
+                    //rho = 0.5323;  u = 1.206;   v = 0.0;     p = 0.3;
+                    rho = 0.5065;     u = 0.8939;     v = 0.0;     p = 0.35;
                 }
                 else if (x < x_mid && y < y_mid) {       // 区域 III
-                    rho = 0.138;   u = 1.206;   v = 1.206;   p = 0.029;
+                    //rho = 0.138;   u = 1.206;   v = 1.206;   p = 0.029;
+                    rho = 1.1;     u = 0.8939;     v = 0.8939;     p = 1.1;
                 }
                 else {                                   // 区域 IV
-                    rho = 0.5323;  u = 0.0;     v = 1.206;   p = 0.3;
+                    //rho = 0.5323;  u = 0.0;     v = 1.206;   p = 0.3;
+                    rho = 0.5065;     u = 0.0;     v = 0.8939;     p = 0.35;
                 }
 
                 // ========= 写入数据 =========
