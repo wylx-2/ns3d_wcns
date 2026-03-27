@@ -40,6 +40,12 @@ bool initialize_from_tecplot(Field3D &F,
                              const CartDecomp &C,
                              const SolverParams &P,
                              const std::string &filename);
+// 从 write_tecplot_field 输出的 field.h5 并行读取并恢复初场
+bool initialize_from_hdf5(Field3D &F,
+                          const GridDesc &G,
+                          const CartDecomp &C,
+                          const SolverParams &P,
+                          const std::string &filename);
 // 从 256^3 Tecplot 文件均匀抽样到当前网格并初始化
 bool initialize_from_tecplot_downsample(Field3D &F,
                                         const GridDesc &G,
