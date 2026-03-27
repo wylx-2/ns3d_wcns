@@ -11,7 +11,7 @@ SOLVER_IN="${ROOT_DIR}/solver.in"
 BACKUP_IN="${ROOT_DIR}/solver.in.bak.riemann_batch"
 
 # Allow users to override run command, e.g.:
-RUN_CMD="mpirun -np 8 ./build/ns3d_wcns" #./tools/run_riemann_batch.sh
+RUN_CMD="mpirun -np 64 ./ns3d_wcns" #./tools/run_riemann_batch.sh
 if [[ -n "${RUN_CMD:-}" ]]; then
   CMD="${RUN_CMD}"
 elif [[ -x "${ROOT_DIR}/build/ns3d_wcns" ]]; then

@@ -65,11 +65,11 @@ int main(int argc, char** argv) {
     Field3D F; 
     F.allocate(L);
     // initialize_uniform_field(F, G, P);  // Initialize field
-    initialize_riemann_2d(F, G, P);
+    // initialize_riemann_2d(F, G, P);
     // initialize_sod_shock_tube(F, G, P);
     // isotropic turbulence initialization
     // bar_urms_target = 1.0, k0 = 5.0, seed = 12345, rho0 = 1.0, p0 = 1.0
-    // init_isotropic_turbulence(F, G, C, P);
+    init_isotropic_turbulence(F, G, C, P);
     // initialize_sine_x_field(F, G, P);
     // initialize_from_tecplot(F, G, C, P, "ILES_field32_tau1.0.dat");
     // initialize_from_tecplot_downsample(F,G,C,P,"field_tau1.0.dat",256,256,256);
