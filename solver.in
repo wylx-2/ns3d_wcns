@@ -59,6 +59,9 @@ TotalTime = 0.1
 # restart = True/False (also accepts Ture)
 restart = True
 restart_file = field.h5
+# structured grid from HDF5 (x/y/z datasets, shape [nz, ny, nx])
+use_grid_file = False
+grid_file = grid.h5
 
 # Post-processing
 # Field

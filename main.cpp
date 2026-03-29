@@ -12,9 +12,24 @@ int main(int argc, char** argv) {
     CartDecomp C;
     SolverParams P;
     GridDesc G; 
+    std::vector<double> grid_x, grid_y, grid_z;
     // initialize SolverParams
     read_solver_params_from_file("solver.in", P, G, C);
     build_cart_decomp(C);
+
+    if (P.use_grid_file) {
+        if (!read_structured_grid_hdf5(P.grid_file, G, grid_x, grid_y, grid_z)) {
+            if (C.rank == 0) {
+                std::cerr << "Failed to read structured grid file: " << P.grid_file << "\n";
+            }
+            MPI_Finalize();
+            return 1;
+        }
+        if (C.rank == 0) {
+            std::cout << "Structured grid loaded from HDF5: " << P.grid_file
+                      << " (" << G.global_nx << " x " << G.global_ny << " x " << G.global_nz << ")\n";
+        }
+    }
 
     LocalDesc L; 
     compute_local_desc(G, C, L, P.ghost_layers, P.ghost_layers, P.ghost_layers);
@@ -61,6 +76,7 @@ int main(int argc, char** argv) {
             case SolverParams::RiemannSolver::AUSM: std::cout << "AUSM\n"; break;
         }
         std::cout << "  if restart: " << (P.restart ? "true" : "false") << ", restart_file: " << P.restart_file << "\n";
+        std::cout << "  if use_grid_file: " << (P.use_grid_file ? "true" : "false") << ", grid_file: " << P.grid_file << "\n";
     }
 
     Field3D F; 

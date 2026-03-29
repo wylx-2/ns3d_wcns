@@ -129,6 +129,8 @@ bool read_solver_params_from_file(
         // ---- initialization source ----
         else if (k=="restart") P.restart = parse_bool(val);
         else if (k=="restart_file") P.restart_file = val;
+        else if (k=="use_grid_file") P.use_grid_file = parse_bool(val);
+        else if (k=="grid_file") P.grid_file = val;
 
         // ---- 边界条件 ----
         auto parse_bc = [&](const std::string &v) {
@@ -417,6 +419,101 @@ bool initialize_from_hdf5(Field3D &F,
     (void)filename;
     return false;
 #endif
+}
+
+bool read_structured_grid_hdf5(const std::string &filename,
+                               GridDesc &G,
+                               std::vector<double> &x,
+                               std::vector<double> &y,
+                               std::vector<double> &z)
+{
+    hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) {
+        std::cerr << "Failed to open structured grid file: " << filename << "\n";
+        return false;
+    }
+
+    auto read_xyz = [&](const char *name, std::vector<double> &buf, hsize_t dims[3]) -> bool {
+        hid_t dset = H5Dopen2(file, name, H5P_DEFAULT);
+        if (dset < 0) {
+            std::cerr << "Missing dataset '" << name << "' in " << filename << "\n";
+            return false;
+        }
+
+        hid_t dspace = H5Dget_space(dset);
+        if (dspace < 0) {
+            H5Dclose(dset);
+            std::cerr << "Failed to get dataspace for dataset '" << name << "'\n";
+            return false;
+        }
+
+        const int ndims = H5Sget_simple_extent_ndims(dspace);
+        if (ndims != 3) {
+            H5Sclose(dspace);
+            H5Dclose(dset);
+            std::cerr << "Dataset '" << name << "' must be 3D ([nz, ny, nx]), got ndims=" << ndims << "\n";
+            return false;
+        }
+
+        H5Sget_simple_extent_dims(dspace, dims, nullptr);
+        const std::size_t npts = static_cast<std::size_t>(dims[0])
+                               * static_cast<std::size_t>(dims[1])
+                               * static_cast<std::size_t>(dims[2]);
+        buf.resize(npts);
+
+        const herr_t ierr = H5Dread(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, buf.data());
+        H5Sclose(dspace);
+        H5Dclose(dset);
+
+        if (ierr < 0) {
+            std::cerr << "Failed to read dataset '" << name << "'\n";
+            return false;
+        }
+        return true;
+    };
+
+    hsize_t dims_x[3] = {0, 0, 0};
+    hsize_t dims_y[3] = {0, 0, 0};
+    hsize_t dims_z[3] = {0, 0, 0};
+
+    bool ok = true;
+    ok = ok && read_xyz("x", x, dims_x);
+    ok = ok && read_xyz("y", y, dims_y);
+    ok = ok && read_xyz("z", z, dims_z);
+
+    H5Fclose(file);
+
+    if (!ok) {
+        return false;
+    }
+
+    const bool same_shape = (dims_x[0] == dims_y[0] && dims_x[1] == dims_y[1] && dims_x[2] == dims_y[2] &&
+                             dims_x[0] == dims_z[0] && dims_x[1] == dims_z[1] && dims_x[2] == dims_z[2]);
+    if (!same_shape) {
+        std::cerr << "Dataset shapes of x/y/z are inconsistent in " << filename << "\n";
+        return false;
+    }
+
+    G.global_nz = static_cast<int>(dims_x[0]);
+    G.global_ny = static_cast<int>(dims_x[1]);
+    G.global_nx = static_cast<int>(dims_x[2]);
+
+    auto minmax_x = std::minmax_element(x.begin(), x.end());
+    auto minmax_y = std::minmax_element(y.begin(), y.end());
+    auto minmax_z = std::minmax_element(z.begin(), z.end());
+
+    G.x0 = *minmax_x.first;
+    G.y0 = *minmax_y.first;
+    G.z0 = *minmax_z.first;
+    G.Lx = *minmax_x.second - *minmax_x.first;
+    G.Ly = *minmax_y.second - *minmax_y.first;
+    G.Lz = *minmax_z.second - *minmax_z.first;
+
+    G.dx = (G.global_nx > 0) ? (G.Lx / static_cast<double>(G.global_nx)) : 0.0;
+    G.dy = (G.global_ny > 0) ? (G.Ly / static_cast<double>(G.global_ny)) : 0.0;
+    G.dz = (G.global_nz > 0) ? (G.Lz / static_cast<double>(G.global_nz)) : 0.0;
+
+    return true;
 }
 
 // 从 256^3 Tecplot 文件均匀抽样到 NX×NY×NZ 网格

@@ -180,6 +180,12 @@ struct SolverParams {
     // restart file path (HDF5)
     std::string restart_file = "field.h5";
 
+    // structured grid file control
+    // if true, read grid coordinates (x/y/z) from HDF5 before local decomposition.
+    bool use_grid_file = false;
+    // structured grid file path (HDF5)
+    std::string grid_file = "grid.h5";
+
     // monitor switches
     bool monitor_res = true;
     bool monitor_energy = true;
@@ -243,6 +249,13 @@ struct Field3D {
     std::vector<double> interp_fx_mass, interp_fx_momx, interp_fx_momy, interp_fx_momz, interp_fx_E;
     std::vector<double> interp_fy_mass, interp_fy_momx, interp_fy_momy, interp_fy_momz, interp_fy_E;
     std::vector<double> interp_fz_mass, interp_fz_momx, interp_fz_momy, interp_fz_momz, interp_fz_E;
+
+    // Jacobian or metric terms for curvilinear grids (if needed)
+    std::vector<double> Ja, xi_x, xi_y, xi_z, eta_x, eta_y, eta_z, zeta_x, zeta_y, zeta_z;
+    std::vector<double> xi_x_fx, xi_y_fx, xi_z_fx;
+    std::vector<double> eta_x_fy, eta_y_fy, eta_z_fy;
+    std::vector<double> zeta_x_fz, zeta_y_fz, zeta_z_fz;
+
 
     // constructor
     Field3D() = default;
@@ -333,6 +346,17 @@ struct Field3D {
         dT_dy.assign(tot, 0.0);
         dT_dz.assign(tot, 0.0);
 
+        Ja.assign(tot, 1.0);
+        xi_x.assign(tot, 1.0);
+        xi_y.assign(tot, 0.0);
+        xi_z.assign(tot, 0.0);
+        eta_x.assign(tot, 0.0);
+        eta_y.assign(tot, 1.0);
+        eta_z.assign(tot, 0.0);
+        zeta_x.assign(tot, 0.0);
+        zeta_y.assign(tot, 0.0);
+        zeta_z.assign(tot, 1.0);
+
         // allocate face arrays sizes:
         int fx_count = (L.sx - 1) * L.sy * L.sz; // faces between i and i+1
         int fy_count = L.sx * (L.sy - 1) * L.sz;
@@ -370,6 +394,16 @@ struct Field3D {
         interp_fz_momy.assign(fz_count, 0.0);
         interp_fz_momz.assign(fz_count, 0.0);
         interp_fz_E.assign(fz_count, 0.0);
+
+        xi_x_fx.assign(fx_count, 1.0);
+        xi_y_fx.assign(fx_count, 0.0);
+        xi_z_fx.assign(fx_count, 0.0);
+        eta_x_fy.assign(fy_count, 0.0);
+        eta_y_fy.assign(fy_count, 1.0);
+        eta_z_fy.assign(fy_count, 0.0);
+        zeta_x_fz.assign(fz_count, 0.0);
+        zeta_y_fz.assign(fz_count, 0.0);
+        zeta_z_fz.assign(fz_count, 1.0);
     }
 
     inline int I(int i, int j, int k) const noexcept { return idx3(i,j,k,L); }

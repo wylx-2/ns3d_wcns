@@ -46,6 +46,12 @@ bool initialize_from_hdf5(Field3D &F,
                           const CartDecomp &C,
                           const SolverParams &P,
                           const std::string &filename);
+// 读取结构网格 HDF5 文件中的坐标数据集 x/y/z（shape: [nz, ny, nx]）
+bool read_structured_grid_hdf5(const std::string &filename,
+                               GridDesc &G,
+                               std::vector<double> &x,
+                               std::vector<double> &y,
+                               std::vector<double> &z);
 // 从 256^3 Tecplot 文件均匀抽样到当前网格并初始化
 bool initialize_from_tecplot_downsample(Field3D &F,
                                         const GridDesc &G,
