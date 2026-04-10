@@ -58,11 +58,15 @@ def build_grid(
     fx: str,
     fy: str,
     fz: str,
+    periodic_x: bool,
+    periodic_y: bool,
+    periodic_z: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """构建三维结构网格坐标。"""
-    i = np.linspace(0.0, 1.0, nx, dtype=np.float64)
-    j = np.linspace(0.0, 1.0, ny, dtype=np.float64)
-    k = np.linspace(0.0, 1.0, nz, dtype=np.float64)
+    # 对周期方向采用 [0,1) 采样，避免两端重复点。
+    i = np.linspace(0.0, 1.0, nx, endpoint=not periodic_x, dtype=np.float64)
+    j = np.linspace(0.0, 1.0, ny, endpoint=not periodic_y, dtype=np.float64)
+    k = np.linspace(0.0, 1.0, nz, endpoint=not periodic_z, dtype=np.float64)
 
     # 索引顺序与求解器一致: [k, j, i] -> [z, y, x]
     zeta, eta, xi = np.meshgrid(k, j, i, indexing="ij")
@@ -73,7 +77,15 @@ def build_grid(
     return x, y, z
 
 
-def write_hdf5(path: str, x: np.ndarray, y: np.ndarray, z: np.ndarray) -> None:
+def write_hdf5(
+    path: str,
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    periodic_x: bool,
+    periodic_y: bool,
+    periodic_z: bool,
+) -> None:
     """写入 HDF5 文件。"""
     with h5py.File(path, "w") as f:
         dset_x = f.create_dataset("x", data=x, dtype="f8")
@@ -85,6 +97,9 @@ def write_hdf5(path: str, x: np.ndarray, y: np.ndarray, z: np.ndarray) -> None:
         f.attrs["ny"] = int(x.shape[1])
         f.attrs["nz"] = int(x.shape[0])
         f.attrs["layout"] = "[nz, ny, nx]"
+        f.attrs["periodic_x"] = int(periodic_x)
+        f.attrs["periodic_y"] = int(periodic_y)
+        f.attrs["periodic_z"] = int(periodic_z)
 
         dset_x.attrs["description"] = "x coordinate"
         dset_y.attrs["description"] = "y coordinate"
@@ -123,6 +138,9 @@ def parse_args() -> argparse.Namespace:
         default="zmin + (zmax - zmin) * zeta",
         help="z 坐标表达式，支持变量 xi, eta, zeta 及 np/math 函数",
     )
+    parser.add_argument("--periodic-x", action="store_true", help="x方向按周期采样，去除端点重叠")
+    parser.add_argument("--periodic-y", action="store_true", help="y方向按周期采样，去除端点重叠")
+    parser.add_argument("--periodic-z", action="store_true", help="z方向按周期采样，去除端点重叠")
     return parser.parse_args()
 
 
@@ -147,11 +165,28 @@ def main() -> None:
     }.items():
         SAFE_NAMES[name] = float(value)
 
-    x, y, z = build_grid(args.nx, args.ny, args.nz, fx, fy, fz)
-    write_hdf5(args.output, x, y, z)
+    x, y, z = build_grid(
+        args.nx,
+        args.ny,
+        args.nz,
+        fx,
+        fy,
+        fz,
+        args.periodic_x,
+        args.periodic_y,
+        args.periodic_z,
+    )
+    write_hdf5(args.output, x, y, z, args.periodic_x, args.periodic_y, args.periodic_z)
 
     print(f"Grid file generated: {args.output}")
     print(f"shape = {x.shape}  (layout: [nz, ny, nx])")
+    print(
+        "periodic sampling: x={}, y={}, z={} (periodic axes use [0,1) to avoid endpoint overlap)".format(
+            args.periodic_x,
+            args.periodic_y,
+            args.periodic_z,
+        )
+    )
     print(
         "x range = [{:.6g}, {:.6g}], y range = [{:.6g}, {:.6g}], z range = [{:.6g}, {:.6g}]".format(
             float(np.min(x)),

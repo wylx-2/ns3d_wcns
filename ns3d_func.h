@@ -27,6 +27,15 @@ void initialize_riemann_2d(Field3D &F, const GridDesc &G, const SolverParams &P)
 // sod shock tube 初始条件
 void initialize_sod_shock_tube(Field3D &F, const GridDesc &G, const SolverParams &P);
 
+// 2D isentropic vortex 初始条件
+void initialize_isentropic_vortex(Field3D &F, const GridDesc &G, const SolverParams &P);
+
+// 球形Riemann问题初始条件
+void initialize_spherical_riemann(Field3D &F, const GridDesc &G, const SolverParams &P);
+
+// 平面Poiseuille流初始条件
+void initialize_Poiseuille_flow(Field3D &F, const GridDesc &G, const SolverParams &P);
+
 // 三维各向同均匀湍流初始条件
 void generate_full_turbulence(int NX, int NY, int NZ,
                               std::vector<double> &u,
@@ -46,12 +55,15 @@ bool initialize_from_hdf5(Field3D &F,
                           const CartDecomp &C,
                           const SolverParams &P,
                           const std::string &filename);
-// 读取结构网格 HDF5 文件中的坐标数据集 x/y/z（shape: [nz, ny, nx]）
+// 读取结构网格 HDF5 文件中的尺寸信息（x/y/z shape: [nz, ny, nx]）
 bool read_structured_grid_hdf5(const std::string &filename,
                                GridDesc &G,
-                               std::vector<double> &x,
-                               std::vector<double> &y,
-                               std::vector<double> &z);
+                               const CartDecomp &C);
+// 并行读取结构网格坐标并写入本 rank 的 F.coord_x/y/z（仅物理区）
+bool read_structured_grid_hdf5_local(const std::string &filename,
+                                     Field3D &F,
+                                     const CartDecomp &C,
+                                     const SolverParams &P);
 // 从 256^3 Tecplot 文件均匀抽样到当前网格并初始化
 bool initialize_from_tecplot_downsample(Field3D &F,
                                         const GridDesc &G,
@@ -66,7 +78,7 @@ bool initialize_from_tecplot_downsample(Field3D &F,
 void apply_boundary(Field3D &F, GridDesc &G, CartDecomp &C, const SolverParams &P);
 
 // 边界条件具体实现函数
-void apply_wall_bc(Field3D &F, const LocalDesc &L, int face_id);
+void apply_wall_bc(Field3D &F, GridDesc &G, const LocalDesc &L, const SolverParams &P, int face_id);
 void apply_symmetry_bc(Field3D &F, const LocalDesc &L, int face_id);
 void apply_outflow_bc(Field3D &F, const LocalDesc &L, int face_id);
 void apply_inflow_bc(Field3D &F, const LocalDesc &L, int face_id);
@@ -75,11 +87,15 @@ void apply_inflow_bc(Field3D &F, const LocalDesc &L, int face_id);
 void apply_boundary_halfnode_flux(Field3D &F, const GridDesc &G, CartDecomp &C, const SolverParams &P);
 void apply_outflow_bc_halfnode_flux(Field3D &F, const LocalDesc &L, int face_id);
 
-void compute_invis_flux(Field3D &F, const SolverParams &P);
+void compute_invis_flux(Field3D &F, const SolverParams &P, const CartDecomp &C);
+void compute_invis_flux_boundary(Field3D &F, const SolverParams &P);
+
+
+
 void WCNS_Riemann_InviscidFlux(std::vector<double> &Fface,
                              const std::vector<std::vector<double>> &Ut,
                              const std::vector<std::vector<double>> &ut,
-                             const SolverParams &P, int dim);
+                             const SolverParams &P, double nx, double ny, double nz);
 void Roe_Riemann_solver(std::vector<double> &Fface,
                  const std::vector<double> &UL, const std::vector<double> &UR,
                  double nx, double ny, double nz,
@@ -174,11 +190,8 @@ static void build_eigen_matrices(const double Ul[5], const double Ur[5],
                                  double Lmat[5][5], double Rmat[5][5],
                                  double lambar[5]);
 
-// 计算空间导数
-void compute_gradients(Field3D &F, const GridDesc &G);
-
 // 计算粘性通量
-void compute_viscous_flux(Field3D &F, const SolverParams &P);
+void compute_viscous_flux(Field3D &F, const CartDecomp &C, const GridDesc &G, const SolverParams &P);
 
 // 计算粘性通量导数
 void compute_vis_flux(Field3D &F, const GridDesc &G);
@@ -186,6 +199,47 @@ void compute_vis_flux(Field3D &F, const GridDesc &G);
 // Output full field in Tecplot ASCII format (per-rank file). Prefix will be used for filename: <prefix>_rank<id>.dat
 // time: physical time to label the output (optional, default 0.0)
 void write_tecplot_field(const Field3D &F, const GridDesc &G, const CartDecomp &C, const SolverParams &P, double time = 0.0);
+
+// Write per-rank Tecplot file for local grid indices, physical coordinates,
+// node Jacobian and metric coefficients.
+void write_grid_metrics_tecplot_rank(const Field3D &F,
+                                     const GridDesc &G,
+                                     const CartDecomp &C,
+                                     const std::string &filename_prefix = "grid_metrics");
+
+// Write per-rank Tecplot file for raw metric derivatives, including x_xi/x_eta/.../z_zeta.
+void write_grid_metric_derivatives_tecplot_rank(const Field3D &F,
+                                                const GridDesc &G,
+                                                const CartDecomp &C,
+                                                const std::vector<double> &x_xi,
+                                                const std::vector<double> &x_eta,
+                                                const std::vector<double> &x_zeta,
+                                                const std::vector<double> &y_xi,
+                                                const std::vector<double> &y_eta,
+                                                const std::vector<double> &y_zeta,
+                                                const std::vector<double> &z_xi,
+                                                const std::vector<double> &z_eta,
+                                                const std::vector<double> &z_zeta,
+                                                const std::string &filename_prefix = "grid_metric_derivatives");
+
+// Write per-rank Tecplot file for z-coordinate values interpolated onto z-half nodes.
+void write_halfnode_z_tecplot_rank(const LocalDesc &L,
+                                   const CartDecomp &C,
+                                   const std::vector<double> &z_half,
+                                   const std::string &filename_prefix = "grid_halfnode_z");
+
+// Write per-rank Tecplot files for half-node inviscid fluxes in xi/eta/zeta directions.
+void write_halfnode_invis_flux_tecplot_rank(const Field3D &F,
+                                            const CartDecomp &C,
+                                            char dir,
+                                            unsigned long long call_id,
+                                            const std::string &filename_prefix = "halfnode_invis_flux");
+
+// Write per-rank Tecplot file for RHS values at nodes.
+void write_rhs_tecplot_rank(const Field3D &F,
+                            const CartDecomp &C,
+                            unsigned long long call_id,
+                            const std::string &filename_prefix = "rhs_values");
 
 // Write residuals (per-equation L2 residuals and total energy) vs time step to a Tecplot-like ASCII table.
 // The file will contain VARIABLES = "Step" "Res_rho" "Res_rhou" "Res_rhov" "Res_rhow" "Res_E" "Etot"
@@ -215,3 +269,45 @@ void compute_energy_spectrum_rank0(
         const std::string &filename);
 // compute dudx gradients用于湍流统计
 void compute_gradients_dudx(Field3D &F, const GridDesc &G);
+
+// 节点场到半节点面的方向插值（与度量系数构造一致）
+void interp_half_x(const std::vector<double> &node, std::vector<double> &face, const LocalDesc &L);
+void interp_half_y(const std::vector<double> &node, std::vector<double> &face, const LocalDesc &L);
+void interp_half_z(const std::vector<double> &node, std::vector<double> &face, const LocalDesc &L);
+// 边界近边界的半节点插值
+void interp_half_x_boundary(const std::vector<double> &node, std::vector<double> &face, const LocalDesc &L);
+void interp_half_y_boundary(const std::vector<double> &node, std::vector<double> &face, const LocalDesc &L);
+void interp_half_z_boundary(const std::vector<double> &node, std::vector<double> &face, const LocalDesc &L);
+
+// 交换半节点通量的 halo（仅物理区半节点）
+void exchange_half_halo_x(std::vector<double> &a,const LocalDesc &L,const CartDecomp &C,int layers,int tag_base);
+void exchange_half_halo_y(std::vector<double> &a,const LocalDesc &L,const CartDecomp &C,int layers,int tag_base);
+void exchange_half_halo_z(std::vector<double> &a,const LocalDesc &L,const CartDecomp &C,int layers,int tag_base);
+void exchange_node_halo_x(std::vector<double> &a,const LocalDesc &L,const CartDecomp &C,int layers,int tag_base);
+void exchange_node_halo_y(std::vector<double> &a,const LocalDesc &L,const CartDecomp &C,int layers,int tag_base);
+void exchange_node_halo_z(std::vector<double> &a,const LocalDesc &L,const CartDecomp &C,int layers,int tag_base);
+
+// 差分
+void diff_x_half(const std::vector<double> &flux_fx, std::vector<double> &rhs, double idx, const LocalDesc &L);
+void diff_y_half(const std::vector<double> &flux_fy, std::vector<double> &rhs, double idy, const LocalDesc &L);
+void diff_z_half(const std::vector<double> &flux_fz, std::vector<double> &rhs, double idz, const LocalDesc &L);
+// 边界近边界的节点差分
+void diff_x_half_boundary(const std::vector<double> &flux_fx, std::vector<double> &rhs, double idx, const LocalDesc &L);
+void diff_y_half_boundary(const std::vector<double> &flux_fy, std::vector<double> &rhs, double idy, const LocalDesc &L);
+void diff_z_half_boundary(const std::vector<double> &flux_fz, std::vector<double> &rhs, double idz, const LocalDesc &L);
+
+
+// Compute directional derivative in computational space (xi/eta/zeta)
+// for a scalar array with Field3D node layout.
+bool compute_dphi_dtheta(const std::vector<double> &phi,
+                         const std::string &theta,
+                         double dtheta,
+                         const CartDecomp &C,
+                         const LocalDesc &L,
+                         std::vector<double> &dphi_dtheta);
+
+// Compute node metrics/Jacobian and directional half-node metric coefficients.
+bool compute_metrics_and_jacobian(Field3D &F,
+                                  const GridDesc &G,
+                                  const CartDecomp &C,
+                                  const SolverParams &P);

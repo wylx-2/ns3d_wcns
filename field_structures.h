@@ -96,13 +96,15 @@ struct SolverParams {
     double get_mu(double T) const
     {   
         // constant viscosity for now
-        // return mu; 
+         return mu; 
 
         // Sutherland's law
-        return mu * pow(T, 1.5) * (1.0 + S_ref) / (T + S_ref);
+        // return mu * pow(T, 1.5) * (1.0 + S_ref) / (T + S_ref);
 
         // power law
         // return pow(T, 0.76);
+
+        // return 0.0; // inviscid for testing
     }
     double Cv = 1.0/(gamma*(gamma-1.0)*Ma*Ma);
     double Cp = Cv*gamma;
@@ -189,6 +191,17 @@ struct SolverParams {
     // monitor switches
     bool monitor_res = true;
     bool monitor_energy = true;
+
+    // periodic distances for MPI Cartesian communicator (if use_periodic=true)
+    double periodic_xi_px = 0.0, periodic_eta_px = 0.0, periodic_zeta_px = 0.0;
+    double periodic_xi_py = 0.0, periodic_eta_py = 0.0, periodic_zeta_py = 0.0;
+    double periodic_xi_pz = 0.0, periodic_eta_pz = 0.0, periodic_zeta_pz = 0.0;
+
+    // body-force parameters (for testing)
+    bool use_body_force = false;
+    double body_force_x = 0.0;
+    double body_force_y = 0.0;
+    double body_force_z = 0.0;
 };
 
 // --------------------------- Halo exchange requests --------------------------
@@ -196,6 +209,11 @@ struct HaloRequests {
     std::vector<MPI_Request> reqs;
     std::vector<MPI_Status> stats;
 };
+
+// Node-based halo exchange helpers (implemented in Jocabian.cpp)
+void exchange_node_halo_x(std::vector<double> &a, const LocalDesc &L, const CartDecomp &C, int layers, int tag_base);
+void exchange_node_halo_y(std::vector<double> &a, const LocalDesc &L, const CartDecomp &C, int layers, int tag_base);
+void exchange_node_halo_z(std::vector<double> &a, const LocalDesc &L, const CartDecomp &C, int layers, int tag_base);
 
 // --------------------------- Field container (SoA) ---------------------------
 
@@ -216,7 +234,21 @@ struct Field3D {
     double global_res_rhow = 0.0;
     double global_res_E = 0.0;
     double global_Etot = 0.0;
+    double global_max_abs_u = 0.0;
+    double global_max_abs_v = 0.0;
+    double global_max_abs_w = 0.0;
+    double global_max_rho = 0.0;
+    double global_min_rho = 0.0;
+    double global_max_p = 0.0;
+    double global_min_p = 0.0;
 
+    // coordinates (optional, for curvilinear grids or post-processing)
+    std::vector<double> coord_x, coord_y, coord_z;
+    // curvilinear metrics (if needed)
+    std::vector<double> Ja, xi_x, xi_y, xi_z, eta_x, eta_y, eta_z, zeta_x, zeta_y, zeta_z;
+    std::vector<double> xi_x_fx, xi_y_fx, xi_z_fx;
+    std::vector<double> eta_x_fy, eta_y_fy, eta_z_fy;
+    std::vector<double> zeta_x_fz, zeta_y_fz, zeta_z_fz;
     // Primitive variables (optional cache) -- keep for convenience / performance
     std::vector<double> u, v, w, p, T;
 
@@ -246,16 +278,9 @@ struct Field3D {
     std::vector<double> flux_fz_mass, flux_fz_momx, flux_fz_momy, flux_fz_momz, flux_fz_E;
 
     // half-node interpolated values
-    std::vector<double> interp_fx_mass, interp_fx_momx, interp_fx_momy, interp_fx_momz, interp_fx_E;
-    std::vector<double> interp_fy_mass, interp_fy_momx, interp_fy_momy, interp_fy_momz, interp_fy_E;
-    std::vector<double> interp_fz_mass, interp_fz_momx, interp_fz_momy, interp_fz_momz, interp_fz_E;
-
-    // Jacobian or metric terms for curvilinear grids (if needed)
-    std::vector<double> Ja, xi_x, xi_y, xi_z, eta_x, eta_y, eta_z, zeta_x, zeta_y, zeta_z;
-    std::vector<double> xi_x_fx, xi_y_fx, xi_z_fx;
-    std::vector<double> eta_x_fy, eta_y_fy, eta_z_fy;
-    std::vector<double> zeta_x_fz, zeta_y_fz, zeta_z_fz;
-
+    std::vector<double> vis_flux_fx_momx, vis_flux_fx_momy, vis_flux_fx_momz, vis_flux_fx_E;
+    std::vector<double> vis_flux_fy_momx, vis_flux_fy_momy, vis_flux_fy_momz, vis_flux_fy_E;
+    std::vector<double> vis_flux_fz_momx, vis_flux_fz_momy, vis_flux_fz_momz, vis_flux_fz_E;
 
     // constructor
     Field3D() = default;
@@ -266,6 +291,20 @@ struct Field3D {
         L.sy = L.ny + 2*L.ngy;
         L.sz = L.nz + 2*L.ngz;
         const int tot = L.sx * L.sy * L.sz;
+
+        coord_x.assign(tot, 0.0);
+        coord_y.assign(tot, 0.0);
+        coord_z.assign(tot, 0.0);
+        Ja.assign(tot, 1.0);
+        xi_x.assign(tot, 1.0);
+        xi_y.assign(tot, 0.0);
+        xi_z.assign(tot, 0.0);
+        eta_x.assign(tot, 0.0);
+        eta_y.assign(tot, 1.0);
+        eta_z.assign(tot, 0.0);
+        zeta_x.assign(tot, 0.0);
+        zeta_y.assign(tot, 0.0);
+        zeta_z.assign(tot, 1.0);
 
         rho.assign(tot, 1.0);
         rhou.assign(tot, 0.0);
@@ -346,17 +385,6 @@ struct Field3D {
         dT_dy.assign(tot, 0.0);
         dT_dz.assign(tot, 0.0);
 
-        Ja.assign(tot, 1.0);
-        xi_x.assign(tot, 1.0);
-        xi_y.assign(tot, 0.0);
-        xi_z.assign(tot, 0.0);
-        eta_x.assign(tot, 0.0);
-        eta_y.assign(tot, 1.0);
-        eta_z.assign(tot, 0.0);
-        zeta_x.assign(tot, 0.0);
-        zeta_y.assign(tot, 0.0);
-        zeta_z.assign(tot, 1.0);
-
         // allocate face arrays sizes:
         int fx_count = (L.sx - 1) * L.sy * L.sz; // faces between i and i+1
         int fy_count = L.sx * (L.sy - 1) * L.sz;
@@ -367,33 +395,30 @@ struct Field3D {
         flux_fx_momy.assign(fx_count, 0.0);
         flux_fx_momz.assign(fx_count, 0.0);
         flux_fx_E.assign(fx_count, 0.0);
-        interp_fx_mass.assign(fx_count, 0.0);
-        interp_fx_momx.assign(fx_count, 0.0);
-        interp_fx_momy.assign(fx_count, 0.0);
-        interp_fx_momz.assign(fx_count, 0.0);
-        interp_fx_E.assign(fx_count, 0.0);
+        vis_flux_fx_momx.assign(fx_count, 0.0);
+        vis_flux_fx_momy.assign(fx_count, 0.0);
+        vis_flux_fx_momz.assign(fx_count, 0.0);
+        vis_flux_fx_E.assign(fx_count, 0.0);
 
         flux_fy_mass.assign(fy_count, 0.0);
         flux_fy_momx.assign(fy_count, 0.0);
         flux_fy_momy.assign(fy_count, 0.0);
         flux_fy_momz.assign(fy_count, 0.0);
         flux_fy_E.assign(fy_count, 0.0);
-        interp_fy_mass.assign(fy_count, 0.0);
-        interp_fy_momx.assign(fy_count, 0.0);
-        interp_fy_momy.assign(fy_count, 0.0);
-        interp_fy_momz.assign(fy_count, 0.0);
-        interp_fy_E.assign(fy_count, 0.0);
+        vis_flux_fy_momx.assign(fy_count, 0.0);
+        vis_flux_fy_momy.assign(fy_count, 0.0);
+        vis_flux_fy_momz.assign(fy_count, 0.0);
+        vis_flux_fy_E.assign(fy_count, 0.0);
 
         flux_fz_mass.assign(fz_count, 0.0);
         flux_fz_momx.assign(fz_count, 0.0);
         flux_fz_momy.assign(fz_count, 0.0);
         flux_fz_momz.assign(fz_count, 0.0);
         flux_fz_E.assign(fz_count, 0.0);
-        interp_fz_mass.assign(fz_count, 0.0);
-        interp_fz_momx.assign(fz_count, 0.0);
-        interp_fz_momy.assign(fz_count, 0.0);
-        interp_fz_momz.assign(fz_count, 0.0);
-        interp_fz_E.assign(fz_count, 0.0);
+        vis_flux_fz_momx.assign(fz_count, 0.0);
+        vis_flux_fz_momy.assign(fz_count, 0.0);
+        vis_flux_fz_momz.assign(fz_count, 0.0);
+        vis_flux_fz_E.assign(fz_count, 0.0);
 
         xi_x_fx.assign(fx_count, 1.0);
         xi_y_fx.assign(fx_count, 0.0);
@@ -968,63 +993,31 @@ inline void exchange_halos_viscous_flux(Field3D &F, CartDecomp &C, LocalDesc &L,
 // High-level halo exchange routine (non-blocking) for conserved variables
 // This exchanges ghost layers in x, y, z directions. It assumes periodic or neighbor ranks set in LocalDesc.
 inline void exchange_halos_physical(Field3D &F, CartDecomp &C, LocalDesc &L, HaloRequests &out_reqs) {
-    // compute buffer sizes
-    int gx = L.ngx, gy = L.ngy, gz = L.ngz;
-    int nx = L.nx, ny = L.ny, nz = L.nz;
-
-    int pack_x_size = gx * ny * nz * 5; // 5 conserved variables
-    int pack_y_size = gy * nx * nz * 5;
-    int pack_z_size = gz * nx * ny * 5;
-
-    std::vector<double> send_x_left(pack_x_size), send_x_right(pack_x_size);
-    std::vector<double> recv_x_left(pack_x_size), recv_x_right(pack_x_size);
-    std::vector<double> send_y_bot(pack_y_size), send_y_top(pack_y_size);
-    std::vector<double> recv_y_bot(pack_y_size), recv_y_top(pack_y_size);
-    std::vector<double> send_z_back(pack_z_size), send_z_front(pack_z_size);
-    std::vector<double> recv_z_back(pack_z_size), recv_z_front(pack_z_size);
-
-    // pack data
-    pack_x_face_send(F, send_x_left, 1);
-    pack_x_face_send(F, send_x_right, 0);
-    pack_y_face_send(F, send_y_bot, 1);
-    pack_y_face_send(F, send_y_top, 0);
-    pack_z_face_send(F, send_z_back, 1);
-    pack_z_face_send(F, send_z_front, 0);
-
-    // non-blocking receives then sends
+    // Keep API compatibility; node-halo exchange helpers handle MPI internally.
     out_reqs.reqs.clear();
-    out_reqs.stats.resize(6);
-    out_reqs.reqs.resize(12);
+    out_reqs.stats.clear();
 
-    int tag = 100;
-    // X-direction
-    MPI_Irecv(recv_x_left.data(), pack_x_size, MPI_DOUBLE, L.nbr_xm, tag, C.cart_comm, &out_reqs.reqs[0]);
-    MPI_Irecv(recv_x_right.data(), pack_x_size, MPI_DOUBLE, L.nbr_xp, tag+1, C.cart_comm, &out_reqs.reqs[1]);
-    MPI_Isend(send_x_right.data(), pack_x_size, MPI_DOUBLE, L.nbr_xp, tag, C.cart_comm, &out_reqs.reqs[2]);
-    MPI_Isend(send_x_left.data(), pack_x_size, MPI_DOUBLE, L.nbr_xm, tag+1, C.cart_comm, &out_reqs.reqs[3]);
+    // rho
+    exchange_node_halo_x(F.rho, L, C, L.ngx, 1000);
+    exchange_node_halo_y(F.rho, L, C, L.ngy, 1010);
+    exchange_node_halo_z(F.rho, L, C, L.ngz, 1020);
 
-    // Y-direction
-    MPI_Irecv(recv_y_bot.data(), pack_y_size, MPI_DOUBLE, L.nbr_ym, tag+2, C.cart_comm, &out_reqs.reqs[4]);
-    MPI_Irecv(recv_y_top.data(), pack_y_size, MPI_DOUBLE, L.nbr_yp, tag+3, C.cart_comm, &out_reqs.reqs[5]);
-    MPI_Isend(send_y_top.data(), pack_y_size, MPI_DOUBLE, L.nbr_yp, tag+2, C.cart_comm, &out_reqs.reqs[6]);
-    MPI_Isend(send_y_bot.data(), pack_y_size, MPI_DOUBLE, L.nbr_ym, tag+3, C.cart_comm, &out_reqs.reqs[7]);
+    // primitive velocity and pressure fields used by reconstruction/flux routines
+    exchange_node_halo_x(F.u, L, C, L.ngx, 1100);
+    exchange_node_halo_y(F.u, L, C, L.ngy, 1110);
+    exchange_node_halo_z(F.u, L, C, L.ngz, 1120);
 
-    // Z-direction
-    MPI_Irecv(recv_z_back.data(), pack_z_size, MPI_DOUBLE, L.nbr_zm, tag+4, C.cart_comm, &out_reqs.reqs[8]);
-    MPI_Irecv(recv_z_front.data(), pack_z_size, MPI_DOUBLE, L.nbr_zp, tag+5, C.cart_comm, &out_reqs.reqs[9]);
-    MPI_Isend(send_z_front.data(), pack_z_size, MPI_DOUBLE, L.nbr_zp, tag+4, C.cart_comm, &out_reqs.reqs[10]);
-    MPI_Isend(send_z_back.data(), pack_z_size, MPI_DOUBLE, L.nbr_zm, tag+5, C.cart_comm, &out_reqs.reqs[11]);
+    exchange_node_halo_x(F.v, L, C, L.ngx, 1200);
+    exchange_node_halo_y(F.v, L, C, L.ngy, 1210);
+    exchange_node_halo_z(F.v, L, C, L.ngz, 1220);
 
-    // Wait and unpack sequentially (could be overlapped with interior computation)
-    MPI_Waitall((int)out_reqs.reqs.size(), out_reqs.reqs.data(), MPI_STATUSES_IGNORE);
+    exchange_node_halo_x(F.w, L, C, L.ngx, 1300);
+    exchange_node_halo_y(F.w, L, C, L.ngy, 1310);
+    exchange_node_halo_z(F.w, L, C, L.ngz, 1320);
 
-    // Unpack
-    unpack_x_face_recv(F, recv_x_left, 1);
-    unpack_x_face_recv(F, recv_x_right, 0);
-    unpack_y_face_recv(F, recv_y_bot, 1);
-    unpack_y_face_recv(F, recv_y_top, 0);
-    unpack_z_face_recv(F, recv_z_back, 1);
-    unpack_z_face_recv(F, recv_z_front, 0);
+    exchange_node_halo_x(F.p, L, C, L.ngx, 1400);
+    exchange_node_halo_y(F.p, L, C, L.ngy, 1410);
+    exchange_node_halo_z(F.p, L, C, L.ngz, 1420);
 }
 
 // High-level halo exchange routine (non-blocking) for half-node flux variables
@@ -1080,13 +1073,13 @@ inline void exchange_halos_halfnode_flux(Field3D &F, CartDecomp &C, LocalDesc &L
     // Wait and unpack sequentially (could be overlapped with interior computation)
     MPI_Waitall((int)out_reqs.reqs.size(), out_reqs.reqs.data(), MPI_STATUSES_IGNORE);
 
-    // Unpack
-    unpack_x_face_recv_halfnode_flux(F, recv_x_left, 1);
-    unpack_x_face_recv_halfnode_flux(F, recv_x_right, 0);
-    unpack_y_face_recv_halfnode_flux(F, recv_y_bot, 1);
-    unpack_y_face_recv_halfnode_flux(F, recv_y_top, 0);
-    unpack_z_face_recv_halfnode_flux(F, recv_z_back, 1);
-    unpack_z_face_recv_halfnode_flux(F, recv_z_front, 0);
+    // Unpack only for valid neighbors. Do not inject non-periodic ghost faces.
+    if (L.nbr_xm != MPI_PROC_NULL) unpack_x_face_recv_halfnode_flux(F, recv_x_left, 1);
+    if (L.nbr_xp != MPI_PROC_NULL) unpack_x_face_recv_halfnode_flux(F, recv_x_right, 0);
+    if (L.nbr_ym != MPI_PROC_NULL) unpack_y_face_recv_halfnode_flux(F, recv_y_bot, 1);
+    if (L.nbr_yp != MPI_PROC_NULL) unpack_y_face_recv_halfnode_flux(F, recv_y_top, 0);
+    if (L.nbr_zm != MPI_PROC_NULL) unpack_z_face_recv_halfnode_flux(F, recv_z_back, 1);
+    if (L.nbr_zp != MPI_PROC_NULL) unpack_z_face_recv_halfnode_flux(F, recv_z_front, 0);
 }
 
 
