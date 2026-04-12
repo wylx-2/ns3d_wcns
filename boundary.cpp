@@ -8,6 +8,8 @@
 
 enum FaceID { XMIN=0, XMAX=1, YMIN=2, YMAX=3, ZMIN=4, ZMAX=5 };
 struct NeighborInfo { int nbr; SolverParams::BCType face; FaceID id; };
+
+// static void apply_edge_corner_fix(Field3D &F, const LocalDesc &L, const SolverParams &P);
 //------------------------------------------------------------
 // 边界更新核心函数
 //------------------------------------------------------------
@@ -33,7 +35,7 @@ void apply_boundary(Field3D &F, GridDesc &G, CartDecomp &C,
         switch (d.face)
         {
             case SolverParams::BCType::Wall:
-                apply_wall_bc(F, L, d.id);
+                apply_wall_bc(F, G, L, P, d.id);
                 break;
             case SolverParams::BCType::Symmetry:
                 apply_symmetry_bc(F, L, d.id);
@@ -49,103 +51,527 @@ void apply_boundary(Field3D &F, GridDesc &G, CartDecomp &C,
                 break;
         }
     }
+
+    // apply_edge_corner_fix(F, L, P);
     
     MPI_Barrier(MPI_COMM_WORLD);
 }
 
-// Wall boundary condition implementation
-// No-slip wall 存在问题
-void apply_wall_bc(Field3D &F, const LocalDesc &L, int face)
+static void apply_edge_corner_fix(Field3D &F, const LocalDesc &L, const SolverParams &P)
 {
-    int ng = L.ngx, sx = L.sx, sy = L.sy, sz = L.sz;
+    auto is_active = [](int nbr, SolverParams::BCType bc) {
+        return nbr == MPI_PROC_NULL && bc != SolverParams::BCType::Periodic;
+    };
 
-    if (face == XMIN)
-        for (int k = 0; k < sz; ++k)
-        for (int j = 0; j < sy; ++j)
-        for (int i = 0; i < ng; ++i)
-        {
-            int idg = F.I(i, j, k), idm = F.I(2 * ng - 1 - i, j, k);
-            F.rho[idg] = F.rho[idm];
-            F.u[idg] = -F.u[idm];
-            F.v[idg] = F.v[idm];
-            F.w[idg] = F.w[idm];
-            F.p[idg] = F.p[idm];
+    const bool xmin = is_active(L.nbr_xm, P.bc_xmin);
+    const bool xmax = is_active(L.nbr_xp, P.bc_xmax);
+    const bool ymin = is_active(L.nbr_ym, P.bc_ymin);
+    const bool ymax = is_active(L.nbr_yp, P.bc_ymax);
+    const bool zmin = is_active(L.nbr_zm, P.bc_zmin);
+    const bool zmax = is_active(L.nbr_zp, P.bc_zmax);
+
+    auto fix_point = [&](int i, int j, int k,
+                        bool on_xmin, bool on_xmax,
+                        bool on_ymin, bool on_ymax,
+                        bool on_zmin, bool on_zmax) {
+        const int active_faces = (on_xmin ? 1 : 0) + (on_xmax ? 1 : 0)
+                               + (on_ymin ? 1 : 0) + (on_ymax ? 1 : 0)
+                               + (on_zmin ? 1 : 0) + (on_zmax ? 1 : 0);
+        if (active_faces < 2) return;
+
+        double rho_sum = 0.0, p_sum = 0.0, T_sum = 0.0;
+        double u_sum = 0.0, v_sum = 0.0, w_sum = 0.0;
+        int sample_count = 0;
+
+        auto add_sample = [&](int ii, int jj, int kk) {
+            const int id = F.I(ii, jj, kk);
+            rho_sum += F.rho[id];
+            p_sum   += F.p[id];
+            T_sum   += F.T[id];
+            u_sum   += F.u[id];
+            v_sum   += F.v[id];
+            w_sum   += F.w[id];
+            ++sample_count;
+        };
+
+        if (on_xmin) add_sample(i + 1, j, k);
+        if (on_xmax) add_sample(i - 1, j, k);
+        if (on_ymin) add_sample(i, j + 1, k);
+        if (on_ymax) add_sample(i, j - 1, k);
+        if (on_zmin) add_sample(i, j, k + 1);
+        if (on_zmax) add_sample(i, j, k - 1);
+
+        if (sample_count == 0) return;
+
+        const int idg = F.I(i, j, k);
+        F.rho[idg] = rho_sum / static_cast<double>(sample_count);
+        F.p[idg]   = p_sum   / static_cast<double>(sample_count);
+        F.T[idg]   = T_sum   / static_cast<double>(sample_count);
+
+        const bool has_wall = (on_xmin && P.bc_xmin == SolverParams::BCType::Wall)
+                           || (on_xmax && P.bc_xmax == SolverParams::BCType::Wall)
+                           || (on_ymin && P.bc_ymin == SolverParams::BCType::Wall)
+                           || (on_ymax && P.bc_ymax == SolverParams::BCType::Wall)
+                           || (on_zmin && P.bc_zmin == SolverParams::BCType::Wall)
+                           || (on_zmax && P.bc_zmax == SolverParams::BCType::Wall);
+
+        if (has_wall) {
+            F.u[idg] = 0.0;
+            F.v[idg] = 0.0;
+            F.w[idg] = 0.0;
+        } else {
+            F.u[idg] = u_sum / static_cast<double>(sample_count);
+            F.v[idg] = v_sum / static_cast<double>(sample_count);
+            F.w[idg] = w_sum / static_cast<double>(sample_count);
+
+            if ((on_xmin && P.bc_xmin == SolverParams::BCType::Symmetry) ||
+                (on_xmax && P.bc_xmax == SolverParams::BCType::Symmetry)) {
+                F.u[idg] = 0.0;
+            }
+            if ((on_ymin && P.bc_ymin == SolverParams::BCType::Symmetry) ||
+                (on_ymax && P.bc_ymax == SolverParams::BCType::Symmetry)) {
+                F.v[idg] = 0.0;
+            }
+            if ((on_zmin && P.bc_zmin == SolverParams::BCType::Symmetry) ||
+                (on_zmax && P.bc_zmax == SolverParams::BCType::Symmetry)) {
+                F.w[idg] = 0.0;
+            }
         }
-    else if (face == XMAX)
-        for (int k = 0; k < sz; ++k)
-            for (int j = 0; j < sy; ++j)
-                for (int i = sx - ng; i < sx; ++i)
-                {
-                    int idg = F.I(i, j, k), idm = F.I(2 * (sx - ng) - 1 - i, j, k);
-                    F.rho[idg] = F.rho[idm];
-                    F.u[idg] = -F.u[idm];
-                    F.v[idg] = F.v[idm];
-                    F.w[idg] = F.w[idm];
-                    F.p[idg] = F.p[idm];
-                }
-    else if (face == YMIN)
-        for (int k = 0; k < sz; ++k)
-            for (int j = 0; j < ng; ++j)
-                for (int i = 0; i < sx; ++i)
-                {
-                    int idg = F.I(i, j, k), idm = F.I(i, 2 * ng - 1 - j, k);
-                    F.rho[idg] = F.rho[idm];
-                    F.v[idg] = -F.v[idm];
-                    F.u[idg] = F.u[idm];
-                    F.w[idg] = F.w[idm];
-                    F.p[idg] = F.p[idm];
-                }
-    else if (face == YMAX)
-        for (int k = 0; k < sz; ++k)
-            for (int j = sy - ng; j < sy; ++j)
-                for (int i = 0; i < sx; ++i)
-                {
-                    int idg = F.I(i, j, k), idm = F.I(i, 2 * (sy - ng) - 1 - j, k);
-                    F.rho[idg] = F.rho[idm];
-                    F.v[idg] = -F.v[idm];
-                    F.u[idg] = F.u[idm];
-                    F.w[idg] = F.w[idm];
-                    F.p[idg] = F.p[idm];
-                }
-    else if (face == ZMIN)
-        for (int k = 0; k < ng; ++k)
-            for (int j = 0; j < sy; ++j)
-                for (int i = 0; i < sx; ++i)
-                {
-                    int idg = F.I(i, j, k), idm = F.I(i, j, 2 * ng - 1 - k);
-                    F.rho[idg] = F.rho[idm];
-                    F.w[idg] = -F.w[idm];
-                    F.u[idg] = F.u[idm];
-                    F.v[idg] = F.v[idm];
-                    F.p[idg] = F.p[idm];
-                }
-    else if (face == ZMAX)
-        for (int k = sz - ng; k < sz; ++k)
-            for (int j = 0; j < sy; ++j)
-                for (int i = 0; i < sx; ++i)
-                {
-                    int idg = F.I(i, j, k), idm = F.I(i, j, 2 * (sz - ng) - 1 - k);
-                    F.rho[idg] = F.rho[idm];
-                    F.w[idg] = -F.w[idm];
-                    F.u[idg] = F.u[idm];
-                    F.v[idg] = F.v[idm];
-                    F.p[idg] = F.p[idm];
-                }
+
+        F.E[idg] = F.p[idg] / (P.gamma - 1.0)
+                 + 0.5 * F.rho[idg] * (F.u[idg] * F.u[idg] + F.v[idg] * F.v[idg] + F.w[idg] * F.w[idg]);
+    };
+
+    for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const bool on_xmin = xmin && (i == L.ngx);
+                const bool on_xmax = xmax && (i == L.ngx + L.nx - 1);
+                const bool on_ymin = ymin && (j == L.ngy);
+                const bool on_ymax = ymax && (j == L.ngy + L.ny - 1);
+                const bool on_zmin = zmin && (k == L.ngz);
+                const bool on_zmax = zmax && (k == L.ngz + L.nz - 1);
+                fix_point(i, j, k,
+                          on_xmin, on_xmax,
+                          on_ymin, on_ymax,
+                          on_zmin, on_zmax);
+            }
+        }
+    }
 }
 
+// new No-slip wall boundary condition with ghost
+
+void apply_wall_bc(Field3D &F, GridDesc &G, const LocalDesc &L,const SolverParams &P, int face)
+{
+    (void)G;
+
+    const double gamma = P.gamma;
+
+    auto fill_cell = [&](int ig, int jg, int kg, int ir, int jr, int kr) {
+        const int idg = F.I(ig, jg, kg);
+        const int idr = F.I(ir, jr, kr);
+
+        // no-slip: all velocity components are odd reflection
+        F.u[idg] = -F.u[idr];
+        F.v[idg] = -F.v[idr];
+        F.w[idg] = -F.w[idr];
+
+        // scalar quantities use even reflection (zero normal gradient)
+        F.p[idg] = F.p[idr];
+        F.T[idg] = F.T[idr];
+        F.rho[idg] = F.rho[idr];
+    };
+
+    if (face == XMIN) {
+        for (int k = 0; k < L.sz; ++k) {
+        for (int j = 0; j < L.sy; ++j) {
+            const int ii = F.I(L.ngx, j, k);
+            F.u[ii] = 0.0;
+            F.v[ii] = 0.0;
+            F.w[ii] = 0.0;
+
+            for (int layer = 1; layer <= L.ngx; ++layer) {
+                const int ig = L.ngx - layer;
+                const int ir = L.ngx + layer;
+                fill_cell(ig, j, k, ir, j, k);
+            }
+        }}
+        return;
+    }
+
+    if (face == XMAX) {
+        for (int k = 0; k < L.sz; ++k) {
+        for (int j = 0; j < L.sy; ++j) {
+            const int ii = F.I(L.ngx + L.nx - 1, j, k);
+            F.u[ii] = 0.0;
+            F.v[ii] = 0.0;
+            F.w[ii] = 0.0;
+                
+            for (int layer = 1; layer <= L.ngx; ++layer) {
+                const int ig = L.ngx + L.nx - 1 + layer;
+                const int ir = L.ngx + L.nx - 1 - layer;
+                fill_cell(ig, j, k, ir, j, k);
+            }
+        }}
+        return;
+    }
+
+    if (face == YMIN) {
+        for(int k = 0; k < L.sz; ++k) {
+        for(int i = 0; i < L.sx; ++i) {
+            const int jj = F.I(i, L.ngy, k);
+            F.u[jj] = 0.0;
+            F.v[jj] = 0.0;
+            F.w[jj] = 0.0;
+
+            for (int layer = 1; layer <= L.ngy; ++layer) {
+                const int jg = L.ngy - layer;
+                const int jr = L.ngy + layer;
+                fill_cell(i, jg, k, i, jr, k);
+            }
+        }}
+        return;
+    }
+
+    if (face == YMAX) {
+        for(int k = 0; k < L.sz; ++k) {
+        for(int i = 0; i < L.sx; ++i) {
+            const int jj = F.I(i, L.ngy + L.ny - 1, k);
+            F.u[jj] = 0.0;
+            F.v[jj] = 0.0;
+            F.w[jj] = 0.0;
+
+            for (int layer = 1; layer <= L.ngy; ++layer) {
+                const int jg = L.ngy + L.ny - 1 + layer;
+                const int jr = L.ngy + L.ny - 1 - layer;
+                fill_cell(i, jg, k, i, jr, k);
+            }
+        }}
+        return;
+    }
+
+    if (face == ZMIN) {
+        for (int j = 0; j < L.sy; ++j) {
+        for (int i = 0; i < L.sx; ++i) {
+            const int kk = F.I(i, j, L.ngz);
+            F.u[kk] = 0.0;
+            F.v[kk] = 0.0;
+            F.w[kk] = 0.0;
+
+            for (int layer = 1; layer <= L.ngz; ++layer) {
+                const int kg = L.ngz - layer;
+                const int kr = L.ngz + layer;
+                fill_cell(i, j, kg, i, j, kr);
+            }
+        }}
+        return;
+    }
+
+    if (face == ZMAX) {
+        for (int j = 0; j < L.sy; ++j) {
+        for (int i = 0; i < L.sx; ++i) {
+            const int kk = F.I(i, j, L.ngz + L.nz - 1);
+            F.u[kk] = 0.0;
+            F.v[kk] = 0.0;
+            F.w[kk] = 0.0;
+        
+            for (int layer = 1; layer <= L.ngz; ++layer) {
+                const int kg = L.ngz + L.nz - 1 + layer;
+                const int kr = L.ngz + L.nz - 1 - layer;
+                fill_cell(i, j, kg, i, j, kr);
+            }
+        }}
+        return;
+    }
+}
+
+
+// Wall boundary condition implementation
+// No-slip wall 存在问题
+/*
+void apply_wall_bc(Field3D &F, GridDesc &G, const LocalDesc &L,const SolverParams &P, int face)
+{
+    const std::vector<double> p_old = F.p;
+    const std::vector<double> T_old = F.T;
+
+    auto update_pt = [&](int i, int j, int k,
+                         int i1, int j1, int k1,
+                         int i2, int j2, int k2,
+                         int iep, int jep, int kep,
+                         int iem, int jem, int kem,
+                         int izp, int jzp, int kzp,
+                         int izm, int jzm, int kzm,
+                         double a, double b,
+                         double sign_n) {
+        const int idg = F.I(i, j, k);
+        const int id1 = F.I(i1, j1, k1);
+        const int id2 = F.I(i2, j2, k2);
+        const int id_ep = F.I(iep, jep, kep);
+        const int id_em = F.I(iem, jem, kem);
+        const int id_zp = F.I(izp, jzp, kzp);
+        const int id_zm = F.I(izm, jzm, kzm);
+
+        const double dp_t1 = p_old[id_ep] - p_old[id_em];
+        const double dp_t2 = p_old[id_zp] - p_old[id_zm];
+        const double dT_t1 = T_old[id_ep] - T_old[id_em];
+        const double dT_t2 = T_old[id_zp] - T_old[id_zm];
+        
+        sign_n = 0.0; // 强制不考虑非正交校正
+        F.p[idg] = F.p[id1];//(4.0 * F.p[id1] - F.p[id2] + sign_n * (a * dp_t1 + b * dp_t2)) / 3.0;
+        F.T[idg] = F.T[id1];//(4.0 * F.T[id1] - F.T[id2] + sign_n * (a * dT_t1 + b * dT_t2)) / 3.0;
+        F.u[idg] = 0.0;
+        F.v[idg] = 0.0;
+        F.w[idg] = 0.0;
+        F.rho[idg] = F.p[idg] / (P.Rgas * F.T[idg]);
+    };
+
+    if (face == XMIN) {
+        const int i = L.ngx;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+            for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+                const int idg = F.I(i, j, k);
+                const double gnn = F.xi_x[idg] * F.xi_x[idg] + F.xi_y[idg] * F.xi_y[idg] + F.xi_z[idg] * F.xi_z[idg];
+                const double a = (F.xi_x[idg] * F.eta_x[idg] + F.xi_y[idg] * F.eta_y[idg] + F.xi_z[idg] * F.eta_z[idg]) / gnn * (G.dx / G.dy);
+                const double b = (F.xi_x[idg] * F.zeta_x[idg] + F.xi_y[idg] * F.zeta_y[idg] + F.xi_z[idg] * F.zeta_z[idg]) / gnn * (G.dx / G.dz);
+                update_pt(i, j, k,
+                          i + 1, j, k,
+                          i + 2, j, k,
+                          i, j + 1, k,
+                          i, j - 1, k,
+                          i, j, k + 1,
+                          i, j, k - 1,
+                          a, b, +1.0);
+            }
+        }
+    } else if (face == XMAX) {
+        const int i = L.ngx + L.nx - 1;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+            for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+                const int idg = F.I(i, j, k);
+                const double gnn = F.xi_x[idg] * F.xi_x[idg] + F.xi_y[idg] * F.xi_y[idg] + F.xi_z[idg] * F.xi_z[idg];
+                const double a = (F.xi_x[idg] * F.eta_x[idg] + F.xi_y[idg] * F.eta_y[idg] + F.xi_z[idg] * F.eta_z[idg]) / gnn * (G.dx / G.dy);
+                const double b = (F.xi_x[idg] * F.zeta_x[idg] + F.xi_y[idg] * F.zeta_y[idg] + F.xi_z[idg] * F.zeta_z[idg]) / gnn * (G.dx / G.dz);
+                update_pt(i, j, k,
+                          i - 1, j, k,
+                          i - 2, j, k,
+                          i, j + 1, k,
+                          i, j - 1, k,
+                          i, j, k + 1,
+                          i, j, k - 1,
+                          a, b, -1.0);
+            }
+        }
+    } else if (face == YMIN) {
+        const int j = L.ngy;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int idg = F.I(i, j, k);
+                const double gnn = F.eta_x[idg] * F.eta_x[idg] + F.eta_y[idg] * F.eta_y[idg] + F.eta_z[idg] * F.eta_z[idg];
+                const double a = (F.eta_x[idg] * F.xi_x[idg] + F.eta_y[idg] * F.xi_y[idg] + F.eta_z[idg] * F.xi_z[idg]) / gnn * (G.dy / G.dx);
+                const double b = (F.eta_x[idg] * F.zeta_x[idg] + F.eta_y[idg] * F.zeta_y[idg] + F.eta_z[idg] * F.zeta_z[idg]) / gnn * (G.dy / G.dz);
+                update_pt(i, j, k,
+                          i, j + 1, k,
+                          i, j + 2, k,
+                          i + 1, j, k,
+                          i - 1, j, k,
+                          i, j, k + 1,
+                          i, j, k - 1,
+                          a, b, +1.0);
+            }
+        }
+    } else if (face == YMAX) {
+        const int j = L.ngy + L.ny - 1;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int idg = F.I(i, j, k);
+                const double gnn = F.eta_x[idg] * F.eta_x[idg] + F.eta_y[idg] * F.eta_y[idg] + F.eta_z[idg] * F.eta_z[idg];
+                const double a = (F.eta_x[idg] * F.xi_x[idg] + F.eta_y[idg] * F.xi_y[idg] + F.eta_z[idg] * F.xi_z[idg]) / gnn * (G.dy / G.dx);
+                const double b = (F.eta_x[idg] * F.zeta_x[idg] + F.eta_y[idg] * F.zeta_y[idg] + F.eta_z[idg] * F.zeta_z[idg]) / gnn * (G.dy / G.dz);
+                update_pt(i, j, k,
+                          i, j - 1, k,
+                          i, j - 2, k,
+                          i + 1, j, k,
+                          i - 1, j, k,
+                          i, j, k + 1,
+                          i, j, k - 1,
+                          a, b, -1.0);
+            }
+        }
+    } else if (face == ZMIN) {
+        const int k = L.ngz;
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int idg = F.I(i, j, k);
+                const double gnn = F.zeta_x[idg] * F.zeta_x[idg] + F.zeta_y[idg] * F.zeta_y[idg] + F.zeta_z[idg] * F.zeta_z[idg];
+                const double a = (F.zeta_x[idg] * F.xi_x[idg] + F.zeta_y[idg] * F.xi_y[idg] + F.zeta_z[idg] * F.xi_z[idg]) / gnn * (G.dz / G.dx);
+                const double b = (F.zeta_x[idg] * F.eta_x[idg] + F.zeta_y[idg] * F.eta_y[idg] + F.zeta_z[idg] * F.eta_z[idg]) / gnn * (G.dz / G.dy);
+                update_pt(i, j, k,
+                          i, j, k + 1,
+                          i, j, k + 2,
+                          i + 1, j, k,
+                          i - 1, j, k,
+                          i, j + 1, k,
+                          i, j - 1, k,
+                          a, b, +1.0);
+            }
+        }
+    } else if (face == ZMAX) {
+        const int k = L.ngz + L.nz - 1;
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int idg = F.I(i, j, k);
+                const double gnn = F.zeta_x[idg] * F.zeta_x[idg] + F.zeta_y[idg] * F.zeta_y[idg] + F.zeta_z[idg] * F.zeta_z[idg];
+                const double a = (F.zeta_x[idg] * F.xi_x[idg] + F.zeta_y[idg] * F.xi_y[idg] + F.zeta_z[idg] * F.xi_z[idg]) / gnn * (G.dz / G.dx);
+                const double b = (F.zeta_x[idg] * F.eta_x[idg] + F.zeta_y[idg] * F.eta_y[idg] + F.zeta_z[idg] * F.eta_z[idg]) / gnn * (G.dz / G.dy);
+                update_pt(i, j, k,
+                          i, j, k - 1,
+                          i, j, k - 2,
+                          i + 1, j, k,
+                          i - 1, j, k,
+                          i, j + 1, k,
+                          i, j - 1, k,
+                          a, b, -1.0);
+            }
+        }
+    }
+}
+*/
 // Symmetry boundary condition implementation
 void apply_symmetry_bc(Field3D &F, const LocalDesc &L, int face)
 {
-    // 实际上与 apply_wall_bc 相同，可以直接调用
-    apply_wall_bc(F, L, face);
+    int ngx = L.ngx, ngy = L.ngy, ngz = L.ngz;
+
+    if (face == XMIN) {
+        const int i = ngx;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k)
+            for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+                int id = F.I(i, j, k);
+                F.u[id] = 0.0;
+            }
+    }
+    if (face == XMAX) {
+        const int i = ngx + L.nx - 1;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k)
+            for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+                int id = F.I(i, j, k);
+                F.u[id] = 0.0;
+            }
+    }
+    if (face == YMIN) {
+        const int j = ngy;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k)
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                int id = F.I(i, j, k);
+                F.v[id] = 0.0;
+            }
+    }
+    if (face == YMAX) {
+        const int j = ngy + L.ny - 1;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k)
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                int id = F.I(i, j, k);
+                F.v[id] = 0.0;
+            }
+    }
+    if (face == ZMIN) {
+        const int k = ngz;
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j)
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                int id = F.I(i, j, k);
+                F.w[id] = 0.0;
+            }
+    }
+    if (face == ZMAX) {
+        const int k = ngz + L.nz - 1;
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j)
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                int id = F.I(i, j, k);
+                F.w[id] = 0.0;
+            }
+    }
 }
 
 // Outflow boundary condition implementation
+// simple zero-gradient extrapolation for all variables
+// need to be corrected !!!
 void apply_outflow_bc(Field3D &F, const LocalDesc &L, int face)
 {
-    int ngx = L.ngx, ngy = L.ngy, ngz = L.ngz;
-    int sx = L.sx, sy = L.sy, sz = L.sz;
+    if (face == XMIN) {
+        const int i = L.ngx;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+            for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+                const int idg = F.I(i, j, k);
+                F.rho[idg] = F.rho[F.I(i + 1, j, k)];
+                F.u[idg] = F.u[F.I(i + 1, j, k)];
+                F.v[idg] = F.v[F.I(i + 1, j, k)];
+                F.w[idg] = F.w[F.I(i + 1, j, k)];
+                F.p[idg] = F.p[F.I(i + 1, j, k)];
+            }
+        }
+    } else if (face == XMAX) {
+        const int i = L.ngx + L.nx - 1;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+            for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+                const int idg = F.I(i, j, k);
+                F.rho[idg] = F.rho[F.I(i - 1, j, k)];
+                F.u[idg] = F.u[F.I(i - 1, j, k)];
+                F.v[idg] = F.v[F.I(i - 1, j, k)];
+                F.w[idg] = F.w[F.I(i - 1, j, k)];
+                F.p[idg] = F.p[F.I(i - 1, j, k)];
+            }
+        }
+    } else if (face == YMIN) {
+        const int j = L.ngy;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int idg = F.I(i, j, k);
+                F.rho[idg] = F.rho[F.I(i, j + 1, k)];
+                F.u[idg] = F.u[F.I(i, j + 1, k)];
+                F.v[idg] = F.v[F.I(i, j + 1, k)];
+                F.w[idg] = F.w[F.I(i, j + 1, k)];
+                F.p[idg] = F.p[F.I(i, j + 1, k)];
+            }
+        }
+    } else if (face == YMAX) {
+        const int j = L.ngy + L.ny - 1;
+        for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int idg = F.I(i, j, k);
+                F.rho[idg] = F.rho[F.I(i, j - 1, k)];
+                F.u[idg] = F.u[F.I(i, j - 1, k)];
+                F.v[idg] = F.v[F.I(i, j - 1, k)];
+                F.w[idg] = F.w[F.I(i, j - 1, k)];
+                F.p[idg] = F.p[F.I(i, j - 1, k)];
+            }
+        }
+    } else if (face == ZMIN) {
+        const int k = L.ngz;
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int idg = F.I(i, j, k);
+                F.rho[idg] = F.rho[F.I(i, j, k + 1)];
+                F.u[idg] = F.u[F.I(i, j, k + 1)];
+                F.v[idg] = F.v[F.I(i, j, k + 1)];
+                F.w[idg] = F.w[F.I(i, j, k + 1)];
+                F.p[idg] = F.p[F.I(i, j, k + 1)];
+            }
+        }
+    } else if (face == ZMAX) {
+        const int k = L.ngz + L.nz - 1;
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int idg = F.I(i, j, k);
+                F.rho[idg] = F.rho[F.I(i, j, k - 1)];
+                F.u[idg] = F.u[F.I(i, j, k - 1)];
+                F.v[idg] = F.v[F.I(i, j, k - 1)];
+                F.w[idg] = F.w[F.I(i, j, k - 1)];
+                F.p[idg] = F.p[F.I(i, j, k - 1)];
+            }
+        }
+    }
 
+    /*
     auto copy=[&](int i1,int j1,int k1,int i2,int j2,int k2){
         int id1=F.I(i1,j1,k1), id2=F.I(i2,j2,k2);
         F.rho[id1]=F.rho[id2];
@@ -179,6 +605,8 @@ void apply_outflow_bc(Field3D &F, const LocalDesc &L, int face)
     if (face==ZMAX)
         for(int k=sz-ngz;k<sz;++k) for(int j=0;j<sy;++j) for(int i=0;i<sx;++i)
             copy(i,j,k, i, j, sz-ngz-1);
+
+    */
 }
 
 // Inflow boundary condition implementation
@@ -204,6 +632,7 @@ void apply_inflow_bc(Field3D &F, const LocalDesc &L, int face)
     if (face==ZMAX) for(int k=sz-ng;k<sz;++k)for(int j=0;j<sy;++j)for(int i=0;i<sx;++i) fill(i,j,k);
 }
 
+/*
 void apply_boundary_halfnode_flux(Field3D &F, const GridDesc &G, CartDecomp &C,
                     const SolverParams &P)
 {
@@ -299,3 +728,4 @@ void apply_outflow_bc_halfnode_flux(Field3D &F, const LocalDesc &L, int face)
         for(int k=sz-ngz;k<sz-1;++k) for(int j=0;j<sy;++j) for(int i=0;i<sx;++i)
             copy_fz(i,j,k, i, j, sz-ngz-1);
 }
+*/

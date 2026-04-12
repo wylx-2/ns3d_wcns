@@ -16,6 +16,20 @@ int main(int argc, char** argv) {
     read_solver_params_from_file("solver.in", P, G, C);
     build_cart_decomp(C);
 
+    if (P.use_grid_file) {
+        if (!read_structured_grid_hdf5(P.grid_file, G, C)) {
+            if (C.rank == 0) {
+                std::cerr << "Failed to read structured grid file: " << P.grid_file << "\n";
+            }
+            MPI_Finalize();
+            return 1;
+        }
+        if (C.rank == 0) {
+            std::cout << "Structured grid loaded from HDF5: " << P.grid_file
+                      << " (" << G.global_nx << " x " << G.global_ny << " x " << G.global_nz << ")\n";
+        }
+    }
+
     LocalDesc L; 
     compute_local_desc(G, C, L, P.ghost_layers, P.ghost_layers, P.ghost_layers);
 
@@ -30,6 +44,10 @@ int main(int argc, char** argv) {
         std::cout << "Solver Parameters:\n";
         std::cout << "  gamma: " << P.gamma << ", Pr: " << P.Pr << ", Ma: " << P.Ma << ", Re: " << P.Re << "\n";
         std::cout << "  Cv: " << P.Cv << ", Cp: " << P.Cp << ", Rgas: " << P.Rgas << "mu at T=1: " << P.get_mu(1.0) << "\n";
+
+        std::cout << " if body force: " << (P.use_body_force ? "true" : "false") << ", body_force_x: " << P.body_force_x
+                  << ", body_force_y: " << P.body_force_y << ", body_force_z: " << P.body_force_z << "\n";
+
         std::cout << "  FVS type: ";
         switch (P.fvs_type) {
             case SolverParams::FVS_Type::StegerWarming: std::cout << "Steger-Warming\n"; break;
@@ -61,10 +79,40 @@ int main(int argc, char** argv) {
             case SolverParams::RiemannSolver::AUSM: std::cout << "AUSM\n"; break;
         }
         std::cout << "  if restart: " << (P.restart ? "true" : "false") << ", restart_file: " << P.restart_file << "\n";
+        std::cout << "  if use_grid_file: " << (P.use_grid_file ? "true" : "false") << ", grid_file: " << P.grid_file << "\n";  
     }
 
     Field3D F; 
     F.allocate(L);
+    if (P.use_grid_file) {
+        const bool grid_ok = read_structured_grid_hdf5_local(P.grid_file, F, C, P);
+        if (!grid_ok) {
+            if (C.rank == 0) {
+                std::cerr << "Failed to read local structured grid coordinates from: "
+                          << P.grid_file << "\n";
+            }
+            MPI_Finalize();
+            return 1;
+        }
+        if (C.rank == 0) {
+            std::cout << "Structured grid local coordinates loaded into F.coord_x/y/z\n";
+        }
+
+        // compute grid metrics if needed (for curvilinear grids)
+        if(!compute_metrics_and_jacobian(F, G, C, P)) {
+            if (C.rank == 0) {
+                std::cerr << "Failed to compute grid metrics and Jacobian\n";
+            }
+            MPI_Finalize();
+            return 1;
+        }
+        if (C.rank == 0) {
+            std::cout << "Grid metrics and Jacobian computed\n";
+        }
+        // Debug output of grid coordinates and metrics
+        // write_grid_metrics_tecplot_rank(F, G, C, "grid_metrics");
+    }
+
     // keep original initialization path; only switch to HDF5 when restart is enabled.
     if (P.restart) {
         const std::string &h5_file = P.restart_file;
@@ -82,11 +130,15 @@ int main(int argc, char** argv) {
         }
     } else {
         // initialize_uniform_field(F, G, P);  // Initialize field
-        initialize_riemann_2d(F, G, P);
+        // initialize_isentropic_vortex(F, G, P);
+        // initialize_riemann_2d(F, G, P);
+        // initialize_Poiseuille_flow(F, G, P);
+        // initialize_spherical_riemann(F, G, P);
         // initialize_sod_shock_tube(F, G, P);
         // isotropic turbulence initialization
         // bar_urms_target = 1.0, k0 = 5.0, seed = 12345, rho0 = 1.0, p0 = 1.0
         // init_isotropic_turbulence(F, G, C, P);
+        initialize_channel_flow_turbulent(F, G, P);
         // initialize_sine_x_field(F, G, P);
         // initialize_from_tecplot(F, G, C, P, "ILES_field32_tau1.0.dat");
         // initialize_from_tecplot_downsample(F,G,C,P,"field_tau1.0.dat",256,256,256);
@@ -95,6 +147,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    F.primitiveToConserved(P); // update primitive variables (including ghosts)
     apply_boundary(F, G, C, P); // apply boundary conditions and holo exchange
     F.primitiveToConserved(P); // update primitive variables (including ghosts)
     if (C.rank == 0)

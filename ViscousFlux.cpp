@@ -3,6 +3,81 @@
 #include <mpi.h>
 #include <algorithm>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <cstdlib>
+
+namespace {
+void write_viscous_xface_debug_tecplot(
+    const LocalDesc &L,
+    const CartDecomp &C,
+    const std::vector<double> &u_fx,
+    const std::vector<double> &v_fx,
+    const std::vector<double> &w_fx,
+    const std::vector<double> &du_dx_fx,
+    const std::vector<double> &du_dy_fx,
+    const std::vector<double> &du_dz_fx,
+    const std::vector<double> &dv_dx_fx,
+    const std::vector<double> &dv_dy_fx,
+    const std::vector<double> &dv_dz_fx,
+    const std::vector<double> &dw_dx_fx,
+    const std::vector<double> &dw_dy_fx,
+    const std::vector<double> &dw_dz_fx,
+    const std::vector<double> &dT_dx_fx,
+    const std::vector<double> &dT_dy_fx,
+    const std::vector<double> &dT_dz_fx,
+    const std::vector<double> &T_fx,
+    const std::vector<double> &xi_x_fx,
+    const std::vector<double> &xi_y_fx,
+    const std::vector<double> &xi_z_fx)
+{
+    std::filesystem::create_directories("output");
+
+    std::ostringstream oss;
+    oss << "output/viscous_xface_debug_rank" << std::setw(4) << std::setfill('0') << C.rank << ".dat";
+    std::ofstream ofs(oss.str(), std::ofstream::out);
+    if (!ofs) {
+        std::cerr << "Failed to open viscous x-face debug file: " << oss.str() << "\n";
+        return;
+    }
+
+    ofs << "TITLE = \"Viscous Flux X-Face Debug\"\n";
+    ofs << "VARIABLES = "
+        << "\"i\" \"j\" \"k\" \"gi\" \"gj\" \"gk\" "
+        << "\"u_fx\" \"v_fx\" \"w_fx\" "
+        << "\"du_dx_fx\" \"du_dy_fx\" \"du_dz_fx\" "
+        << "\"dv_dx_fx\" \"dv_dy_fx\" \"dv_dz_fx\" "
+        << "\"dw_dx_fx\" \"dw_dy_fx\" \"dw_dz_fx\" "
+        << "\"dT_dx_fx\" \"dT_dy_fx\" \"dT_dz_fx\" "
+        << "\"T_fx\" "
+        << "\"xi_x_fx\" \"xi_y_fx\" \"xi_z_fx\"\n";
+    ofs << "ZONE T=\"rank_" << C.rank << "\", I=" << (L.sx - 1) << ", J=" << L.sy << ", K=" << L.sz
+        << ", DATAPACKING=POINT\n";
+
+    ofs << std::scientific << std::setprecision(12);
+    for (int k = 0; k < L.sz; ++k) {
+        for (int j = 0; j < L.sy; ++j) {
+            for (int i = 0; i < L.sx - 1; ++i) {
+                const int idf = idx_fx(i, j, k, L);
+                const int gi = L.ox + (i - L.ngx);
+                const int gj = L.oy + (j - L.ngy);
+                const int gk = L.oz + (k - L.ngz);
+                ofs << i << " " << j << " " << k << " "
+                    << gi << " " << gj << " " << gk << " "
+                    << u_fx[idf] << " " << v_fx[idf] << " " << w_fx[idf] << " "
+                    << du_dx_fx[idf] << " " << du_dy_fx[idf] << " " << du_dz_fx[idf] << " "
+                    << dv_dx_fx[idf] << " " << dv_dy_fx[idf] << " " << dv_dz_fx[idf] << " "
+                    << dw_dx_fx[idf] << " " << dw_dy_fx[idf] << " " << dw_dz_fx[idf] << " "
+                    << dT_dx_fx[idf] << " " << dT_dy_fx[idf] << " " << dT_dz_fx[idf] << " "
+                    << T_fx[idf] << " "
+                    << xi_x_fx[idf] << " " << xi_y_fx[idf] << " " << xi_z_fx[idf] << "\n";
+            }
+        }
+    }
+}
+} // namespace
 
 // -----------------------------------------------------------------
 // ---------   计算粘性通量模块 -------------------------------------
@@ -12,6 +87,7 @@
 // ==============================
 // 通用差分模板
 // ==============================
+/*
 inline double diff_2nd_forward(const std::vector<double> &f, int i, double dx, int flag) {
     return (-3.0*f[i] + 4.0*f[i+flag] - f[i+2*flag]) / (2.0*dx);
 }
@@ -102,111 +178,322 @@ inline double diff_z(const std::vector<double> &f, int i, int j, int k, double d
     else
         return diff_6th_central(dummy, 3, dz);
 }
+*/
+
+void compute_gradients_dudx(Field3D &F, const GridDesc &G)
+{
+    const LocalDesc &L = F.L;
+    const double idx = 1.0 / G.dx;
+
+    for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int id = F.I(i, j, k);
+
+                if (i == L.ngx && L.nbr_xm == MPI_PROC_NULL) {
+                    F.du_dx[id] = idx * (-1.5 * F.u[F.I(i, j, k)] + 2.0 * F.u[F.I(i + 1, j, k)] - 0.5 * F.u[F.I(i + 2, j, k)]);
+                } else if (i == L.ngx + L.nx - 1 && L.nbr_xp == MPI_PROC_NULL) {
+                    F.du_dx[id] = idx * (1.5 * F.u[F.I(i, j, k)] - 2.0 * F.u[F.I(i - 1, j, k)] + 0.5 * F.u[F.I(i - 2, j, k)]);
+                } else {
+                    F.du_dx[id] = 0.5 * idx * (F.u[F.I(i + 1, j, k)] - F.u[F.I(i - 1, j, k)]);
+                }
+            }
+        }
+    }
+}
+
 // ==================================================
 // 主函数：自适应阶数梯度计算, 根据边界距离选择差分格式
 // 计算内点的6阶中心差分，边界处根据距离选择低阶格式
 // ==================================================
-void compute_gradients(Field3D &F, const GridDesc &G)
+
+// 计算半节点粘性通量
+void compute_viscous_flux(Field3D &F, const CartDecomp &C, const GridDesc &G, const SolverParams &P)
 {
     const LocalDesc &L = F.L;
-    const double dx = G.dx, dy = G.dy, dz = G.dz;
-    int nx=L.nx, ny=L.ny, nz=L.nz;
-    int ngx=L.ngx, ngy=L.ngy, ngz=L.ngz;
+    const double dxi = G.dx;
+    const double deta = G.dy;
+    const double dzeta = G.dz;
+    const double idx = 1.0 / dxi;
+    const double idy = 1.0 / deta;
+    const double idz = 1.0 / dzeta;
 
-    // 周期判断
-    bool periodic_x = (L.nbr_xm != MPI_PROC_NULL && L.nbr_xp != MPI_PROC_NULL);
-    bool periodic_y = (L.nbr_ym != MPI_PROC_NULL && L.nbr_yp != MPI_PROC_NULL);
-    bool periodic_z = (L.nbr_zm != MPI_PROC_NULL && L.nbr_zp != MPI_PROC_NULL);
+    std::vector<double> du_dxi, du_deta, du_dzeta;
+    std::vector<double> dv_dxi, dv_deta, dv_dzeta;
+    std::vector<double> dw_dxi, dw_deta, dw_dzeta;
+    std::vector<double> dT_dxi, dT_deta, dT_dzeta;
 
-    for (int k = ngz; k < ngz+nz; ++k)
-    for (int j = ngy; j < ngy+ny; ++j)
-    for (int i = ngx; i < ngx+nx; ++i)
-    {
-        int id = F.I(i,j,k);
+    const int tot = L.sx * L.sy * L.sz;
+    const int fx_count = (L.sx - 1) * L.sy * L.sz;
+    const int fy_count = L.sx * (L.sy - 1) * L.sz;
+    const int fz_count = L.sx * L.sy * (L.sz - 1);
 
-        int order_x = choose_scheme(i, ngx, ngx+nx, periodic_x);
-        int order_y = choose_scheme(j, ngy, ngy+ny, periodic_y);
-        int order_z = choose_scheme(k, ngz, ngz+nz, periodic_z);
+    auto compute_metric_weighted_grad = [&](const std::vector<double> &phi,
+                                            const std::vector<double> &xi_comp_fx,
+                                            const std::vector<double> &eta_comp_fy,
+                                            const std::vector<double> &zeta_comp_fz,
+                                            std::vector<double> &dphi_dcomp,
+                                            std::vector<double> &dphi_dxi_out,
+                                            std::vector<double> &dphi_deta_out,
+                                            std::vector<double> &dphi_dzeta_out,
+                                            int tag_base) {
+        std::vector<double> phi_fx(fx_count, 0.0), phi_fy(fy_count, 0.0), phi_fz(fz_count, 0.0);
+        std::vector<double> prod_fx(fx_count, 0.0), prod_fy(fy_count, 0.0), prod_fz(fz_count, 0.0);
 
-        // Compute gradients
-        F.du_dx[id] = diff_x(F.u, i, j, k, dx, order_x, L);
-        F.du_dy[id] = diff_y(F.u, i, j, k, dy, order_y, L);
-        F.du_dz[id] = diff_z(F.u, i, j, k, dz, order_z, L);
+        dphi_dxi_out.assign(tot, 0.0);
+        dphi_deta_out.assign(tot, 0.0);
+        dphi_dzeta_out.assign(tot, 0.0);
+        dphi_dcomp.assign(tot, 0.0);
 
-        F.dv_dx[id] = diff_x(F.v, i, j, k, dx, order_x, L);
-        F.dv_dy[id] = diff_y(F.v, i, j, k, dy, order_y, L);
-        F.dv_dz[id] = diff_z(F.v, i, j, k, dz, order_z, L);
+        interp_half_x(phi, phi_fx, L);
+        interp_half_y(phi, phi_fy, L);
+        interp_half_z(phi, phi_fz, L);
+        exchange_half_halo_x(phi_fx, L, C, L.ngx, tag_base + 0);
+        exchange_half_halo_y(phi_fy, L, C, L.ngy, tag_base + 10);
+        exchange_half_halo_z(phi_fz, L, C, L.ngz, tag_base + 20);
+        interp_half_x_boundary(phi, phi_fx, L);
+        interp_half_y_boundary(phi, phi_fy, L);
+        interp_half_z_boundary(phi, phi_fz, L);
 
-        F.dw_dx[id] = diff_x(F.w, i, j, k, dx, order_x, L);
-        F.dw_dy[id] = diff_y(F.w, i, j, k, dy, order_y, L);
-        F.dw_dz[id] = diff_z(F.w, i, j, k, dz, order_z, L);
+        for (int k = 0; k < L.sz; ++k) {
+            for (int j = 0; j < L.sy; ++j) {
+                for (int i = 0; i < L.sx - 1; ++i) {
+                    const int idf = idx_fx(i, j, k, L);
+                    prod_fx[idf] = phi_fx[idf] * xi_comp_fx[idf];
+                }
+            }
+        }
+        for (int k = 0; k < L.sz; ++k) {
+            for (int j = 0; j < L.sy - 1; ++j) {
+                for (int i = 0; i < L.sx; ++i) {
+                    const int idf = idx_fy(i, j, k, L);
+                    prod_fy[idf] = phi_fy[idf] * eta_comp_fy[idf];
+                }
+            }
+        }
+        for (int k = 0; k < L.sz - 1; ++k) {
+            for (int j = 0; j < L.sy; ++j) {
+                for (int i = 0; i < L.sx; ++i) {
+                    const int idf = idx_fz(i, j, k, L);
+                    prod_fz[idf] = phi_fz[idf] * zeta_comp_fz[idf];
+                }
+            }
+        }
 
-        F.dT_dx[id] = diff_x(F.T, i, j, k, dx, order_x, L);
-        F.dT_dy[id] = diff_y(F.T, i, j, k, dy, order_y, L);
-        F.dT_dz[id] = diff_z(F.T, i, j, k, dz, order_z, L);
+        diff_x_half(prod_fx, dphi_dxi_out, idx, L);
+        diff_y_half(prod_fy, dphi_deta_out, idy, L);
+        diff_z_half(prod_fz, dphi_dzeta_out, idz, L);
+        exchange_node_halo_x(dphi_dxi_out, L, C, L.ngx, tag_base + 30);
+        exchange_node_halo_y(dphi_deta_out, L, C, L.ngy, tag_base + 40);
+        exchange_node_halo_z(dphi_dzeta_out, L, C, L.ngz, tag_base + 50);
+        diff_x_half_boundary(prod_fx, dphi_dxi_out, idx, L);
+        diff_y_half_boundary(prod_fy, dphi_deta_out, idy, L);
+        diff_z_half_boundary(prod_fz, dphi_dzeta_out, idz, L);
+
+        for (int k = 0; k < L.sz; ++k) {
+            for (int j = 0; j < L.sy; ++j) {
+                for (int i = 0; i < L.sx; ++i) {
+                    const int id = idx3(i, j, k, L);
+                    const double Ja = F.Ja[id];
+                    if(Ja == 0.0) continue; // 避免除以零
+                    dphi_dcomp[id] = (dphi_dxi_out[id] + dphi_deta_out[id] + dphi_dzeta_out[id]) / Ja;
+                }
+            }
+        }
+    };
+
+    auto interp_full_x = [&](const std::vector<double> &node, std::vector<double> &face, const LocalDesc &L) {
+        interp_half_x(node, face, L);
+        exchange_half_halo_x(face, L, C, L.ngx, 1000);
+        interp_half_x_boundary(node, face, L);
+    };
+    auto interp_full_y = [&](const std::vector<double> &node, std::vector<double> &face, const LocalDesc &L) {
+        interp_half_y(node, face, L);
+        exchange_half_halo_y(face, L, C, L.ngy, 1010);
+        interp_half_y_boundary(node, face, L);
+    };
+    auto interp_full_z = [&](const std::vector<double> &node, std::vector<double> &face, const LocalDesc &L) {
+        interp_half_z(node, face, L);
+        exchange_half_halo_z(face, L, C, L.ngz, 1020);
+        interp_half_z_boundary(node, face, L);
+    };
+
+    compute_metric_weighted_grad(F.u, F.xi_x_fx, F.eta_x_fy, F.zeta_x_fz,
+                                 F.du_dx, du_dxi, du_deta, du_dzeta, 8100);
+    compute_metric_weighted_grad(F.u, F.xi_y_fx, F.eta_y_fy, F.zeta_y_fz,
+                                 F.du_dy, du_dxi, du_deta, du_dzeta, 8200);
+    compute_metric_weighted_grad(F.u, F.xi_z_fx, F.eta_z_fy, F.zeta_z_fz,
+                                 F.du_dz, du_dxi, du_deta, du_dzeta, 8300);
+
+    compute_metric_weighted_grad(F.v, F.xi_x_fx, F.eta_x_fy, F.zeta_x_fz,
+                                 F.dv_dx, dv_dxi, dv_deta, dv_dzeta, 8400);
+    compute_metric_weighted_grad(F.v, F.xi_y_fx, F.eta_y_fy, F.zeta_y_fz,
+                                 F.dv_dy, dv_dxi, dv_deta, dv_dzeta, 8500);
+    compute_metric_weighted_grad(F.v, F.xi_z_fx, F.eta_z_fy, F.zeta_z_fz,
+                                 F.dv_dz, dv_dxi, dv_deta, dv_dzeta, 8600);
+
+    compute_metric_weighted_grad(F.w, F.xi_x_fx, F.eta_x_fy, F.zeta_x_fz,
+                                 F.dw_dx, dw_dxi, dw_deta, dw_dzeta, 8700);
+    compute_metric_weighted_grad(F.w, F.xi_y_fx, F.eta_y_fy, F.zeta_y_fz,
+                                 F.dw_dy, dw_dxi, dw_deta, dw_dzeta, 8800);
+    compute_metric_weighted_grad(F.w, F.xi_z_fx, F.eta_z_fy, F.zeta_z_fz,
+                                 F.dw_dz, dw_dxi, dw_deta, dw_dzeta, 8900);
+
+    compute_metric_weighted_grad(F.T, F.xi_x_fx, F.eta_x_fy, F.zeta_x_fz,
+                                 F.dT_dx, dT_dxi, dT_deta, dT_dzeta, 9000);
+    compute_metric_weighted_grad(F.T, F.xi_y_fx, F.eta_y_fy, F.zeta_y_fz,
+                                 F.dT_dy, dT_dxi, dT_deta, dT_dzeta, 9100);
+    compute_metric_weighted_grad(F.T, F.xi_z_fx, F.eta_z_fy, F.zeta_z_fz,
+                                 F.dT_dz, dT_dxi, dT_deta, dT_dzeta, 9200);
+
+    std::vector<double> u_fx(fx_count, 0.0), v_fx(fx_count, 0.0), w_fx(fx_count, 0.0);
+    std::vector<double> du_dx_fx(fx_count, 0.0), du_dy_fx(fx_count, 0.0), du_dz_fx(fx_count, 0.0);
+    std::vector<double> dv_dx_fx(fx_count, 0.0), dv_dy_fx(fx_count, 0.0), dv_dz_fx(fx_count, 0.0);
+    std::vector<double> dw_dx_fx(fx_count, 0.0), dw_dy_fx(fx_count, 0.0), dw_dz_fx(fx_count, 0.0);
+    std::vector<double> dT_dx_fx(fx_count, 0.0), dT_dy_fx(fx_count, 0.0), dT_dz_fx(fx_count, 0.0);
+    std::vector<double> T_fx(fx_count, 0.0);
+
+    std::vector<double> u_fy(fy_count, 0.0), v_fy(fy_count, 0.0), w_fy(fy_count, 0.0);
+    std::vector<double> du_dx_fy(fy_count, 0.0), du_dy_fy(fy_count, 0.0), du_dz_fy(fy_count, 0.0);
+    std::vector<double> dv_dx_fy(fy_count, 0.0), dv_dy_fy(fy_count, 0.0), dv_dz_fy(fy_count, 0.0);
+    std::vector<double> dw_dx_fy(fy_count, 0.0), dw_dy_fy(fy_count, 0.0), dw_dz_fy(fy_count, 0.0);
+    std::vector<double> dT_dx_fy(fy_count, 0.0), dT_dy_fy(fy_count, 0.0), dT_dz_fy(fy_count, 0.0);
+    std::vector<double> T_fy(fy_count, 0.0);
+
+    std::vector<double> u_fz(fz_count, 0.0), v_fz(fz_count, 0.0), w_fz(fz_count, 0.0);
+    std::vector<double> du_dx_fz(fz_count, 0.0), du_dy_fz(fz_count, 0.0), du_dz_fz(fz_count, 0.0);
+    std::vector<double> dv_dx_fz(fz_count, 0.0), dv_dy_fz(fz_count, 0.0), dv_dz_fz(fz_count, 0.0);
+    std::vector<double> dw_dx_fz(fz_count, 0.0), dw_dy_fz(fz_count, 0.0), dw_dz_fz(fz_count, 0.0);
+    std::vector<double> dT_dx_fz(fz_count, 0.0), dT_dy_fz(fz_count, 0.0), dT_dz_fz(fz_count, 0.0);
+    std::vector<double> T_fz(fz_count, 0.0);
+
+    interp_full_x(F.u, u_fx, L); interp_full_x(F.v, v_fx, L); interp_full_x(F.w, w_fx, L);
+    interp_full_x(F.du_dx, du_dx_fx, L); interp_full_x(F.du_dy, du_dy_fx, L); interp_full_x(F.du_dz, du_dz_fx, L);
+    interp_full_x(F.dv_dx, dv_dx_fx, L); interp_full_x(F.dv_dy, dv_dy_fx, L); interp_full_x(F.dv_dz, dv_dz_fx, L);
+    interp_full_x(F.dw_dx, dw_dx_fx, L); interp_full_x(F.dw_dy, dw_dy_fx, L); interp_full_x(F.dw_dz, dw_dz_fx, L);
+    interp_full_x(F.dT_dx, dT_dx_fx, L); interp_full_x(F.dT_dy, dT_dy_fx, L); interp_full_x(F.dT_dz, dT_dz_fx, L);
+    interp_full_x(F.T, T_fx, L);
+
+    // Debug dump requested: output x-face viscous variables and stop.
+    /*
+    write_viscous_xface_debug_tecplot(
+        L, C,
+        u_fx, v_fx, w_fx,
+        du_dx_fx, du_dy_fx, du_dz_fx,
+        dv_dx_fx, dv_dy_fx, dv_dz_fx,
+        dw_dx_fx, dw_dy_fx, dw_dz_fx,
+        dT_dx_fx, dT_dy_fx, dT_dz_fx,
+        T_fx,
+        F.xi_x_fx, F.xi_y_fx, F.xi_z_fx);
+    MPI_Barrier(C.cart_comm);
+    if (C.rank == 0) {
+        std::cout << "X-face Tecplot debug files written to output/, stopping program as requested." << std::endl;
+    }
+    MPI_Abort(C.cart_comm, 0);
+    */
+
+    interp_full_y(F.u, u_fy, L); interp_full_y(F.v, v_fy, L); interp_full_y(F.w, w_fy, L);
+    interp_full_y(F.du_dx, du_dx_fy, L); interp_full_y(F.du_dy, du_dy_fy, L); interp_full_y(F.du_dz, du_dz_fy, L);
+    interp_full_y(F.dv_dx, dv_dx_fy, L); interp_full_y(F.dv_dy, dv_dy_fy, L); interp_full_y(F.dv_dz, dv_dz_fy, L);
+    interp_full_y(F.dw_dx, dw_dx_fy, L); interp_full_y(F.dw_dy, dw_dy_fy, L); interp_full_y(F.dw_dz, dw_dz_fy, L);
+    interp_full_y(F.dT_dx, dT_dx_fy, L); interp_full_y(F.dT_dy, dT_dy_fy, L); interp_full_y(F.dT_dz, dT_dz_fy, L);
+    interp_full_y(F.T, T_fy, L);
+
+    interp_full_z(F.u, u_fz, L); interp_full_z(F.v, v_fz, L); interp_full_z(F.w, w_fz, L);
+    interp_full_z(F.du_dx, du_dx_fz, L); interp_full_z(F.du_dy, du_dy_fz, L); interp_full_z(F.du_dz, du_dz_fz, L);
+    interp_full_z(F.dv_dx, dv_dx_fz, L); interp_full_z(F.dv_dy, dv_dy_fz, L); interp_full_z(F.dv_dz, dv_dz_fz, L);
+    interp_full_z(F.dw_dx, dw_dx_fz, L); interp_full_z(F.dw_dy, dw_dy_fz, L); interp_full_z(F.dw_dz, dw_dz_fz, L);
+    interp_full_z(F.dT_dx, dT_dx_fz, L); interp_full_z(F.dT_dy, dT_dy_fz, L); interp_full_z(F.dT_dz, dT_dz_fz, L);
+    interp_full_z(F.T, T_fz, L);
+
+    for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+            for (int i = 0; i < L.sx - 1; ++i) {
+                const int idf = idx_fx(i, j, k, L);
+                const double mu = P.get_mu(T_fx[idf]);
+                const double kappa = mu * P.Cp / P.Pr;
+                const double div = du_dx_fx[idf] + dv_dy_fx[idf] + dw_dz_fx[idf];
+
+                const double tau_xx = mu * (2.0 * du_dx_fx[idf] - 2.0 * div / 3.0);
+                const double tau_xy = mu * (du_dy_fx[idf] + dv_dx_fx[idf]);
+                const double tau_xz = mu * (du_dz_fx[idf] + dw_dx_fx[idf]);
+
+                const double tau_yy = mu * (2.0 * dv_dy_fx[idf] - 2.0 * div / 3.0);
+                const double tau_yz = mu * (dv_dz_fx[idf] + dw_dy_fx[idf]);
+                const double tau_zz = mu * (2.0 * dw_dz_fx[idf] - 2.0 * div / 3.0);
+
+                const double b_x = u_fx[idf] * tau_xx + v_fx[idf] * tau_xy + w_fx[idf] * tau_xz + kappa * dT_dx_fx[idf];
+                const double b_y = u_fx[idf] * tau_xy + v_fx[idf] * tau_yy + w_fx[idf] * tau_yz + kappa * dT_dy_fx[idf];
+                const double b_z = u_fx[idf] * tau_xz + v_fx[idf] * tau_yz + w_fx[idf] * tau_zz + kappa * dT_dz_fx[idf];
+
+
+                F.vis_flux_fx_momx[idf] = tau_xx * F.xi_x_fx[idf] + tau_xy * F.xi_y_fx[idf] + tau_xz * F.xi_z_fx[idf];
+                F.vis_flux_fx_momy[idf] = tau_xy * F.xi_x_fx[idf] + tau_yy * F.xi_y_fx[idf] + tau_yz * F.xi_z_fx[idf];
+                F.vis_flux_fx_momz[idf] = tau_xz * F.xi_x_fx[idf] + tau_yz * F.xi_y_fx[idf] + tau_zz * F.xi_z_fx[idf];
+                F.vis_flux_fx_E[idf] = b_x * F.xi_x_fx[idf] + b_y * F.xi_y_fx[idf] + b_z * F.xi_z_fx[idf];
+            }
+        }
+    }
+
+    for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+        for (int j = 0; j < L.sy - 1; ++j) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int idf = idx_fy(i, j, k, L);
+                const double mu = P.get_mu(T_fy[idf]);
+                const double kappa = mu * P.Cp / P.Pr;
+                const double div = du_dx_fy[idf] + dv_dy_fy[idf] + dw_dz_fy[idf];
+
+                const double tau_yy = mu * (2.0 * dv_dy_fy[idf] - 2.0 * div / 3.0);
+                const double tau_xy = mu * (du_dy_fy[idf] + dv_dx_fy[idf]);
+                const double tau_yz = mu * (dv_dz_fy[idf] + dw_dy_fy[idf]);
+
+                const double tau_xx = mu * (2.0 * du_dx_fy[idf] - 2.0 * div / 3.0);
+                const double tau_xz = mu * (du_dz_fy[idf] + dw_dx_fy[idf]);
+                const double tau_zz = mu * (2.0 * dw_dz_fy[idf] - 2.0 * div / 3.0);
+
+                const double b_x = u_fy[idf] * tau_xx + v_fy[idf] * tau_xy + w_fy[idf] * tau_xz + kappa * dT_dx_fy[idf];
+                const double b_y = u_fy[idf] * tau_xy + v_fy[idf] * tau_yy + w_fy[idf] * tau_yz + kappa * dT_dy_fy[idf];
+                const double b_z = u_fy[idf] * tau_xz + v_fy[idf] * tau_yz + w_fy[idf] * tau_zz + kappa * dT_dz_fy[idf];
+
+                F.vis_flux_fy_momx[idf] = tau_xx * F.eta_x_fy[idf] + tau_xy * F.eta_y_fy[idf] + tau_xz * F.eta_z_fy[idf];
+                F.vis_flux_fy_momy[idf] = tau_xy * F.eta_x_fy[idf] + tau_yy * F.eta_y_fy[idf] + tau_yz * F.eta_z_fy[idf];
+                F.vis_flux_fy_momz[idf] = tau_xz * F.eta_x_fy[idf] + tau_yz * F.eta_y_fy[idf] + tau_zz * F.eta_z_fy[idf];
+                F.vis_flux_fy_E[idf] = b_x * F.eta_x_fy[idf] + b_y * F.eta_y_fy[idf] + b_z * F.eta_z_fy[idf];
+            }
+        }
+    }
+
+    for (int k = 0; k < L.sz - 1; ++k) {
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int idf = idx_fz(i, j, k, L);
+                const double mu = P.get_mu(T_fz[idf]);
+                const double kappa = mu * P.Cp / P.Pr;
+                const double div = du_dx_fz[idf] + dv_dy_fz[idf] + dw_dz_fz[idf];
+
+                const double tau_zz = mu * (2.0 * dw_dz_fz[idf] - 2.0 * div / 3.0);
+                const double tau_xz = mu * (du_dz_fz[idf] + dw_dx_fz[idf]);
+                const double tau_yz = mu * (dv_dz_fz[idf] + dw_dy_fz[idf]);
+
+                const double tau_xx = mu * (2.0 * du_dx_fz[idf] - 2.0 * div / 3.0);
+                const double tau_xy = mu * (du_dy_fz[idf] + dv_dx_fz[idf]);
+                const double tau_yy = mu * (2.0 * dv_dy_fz[idf] - 2.0 * div / 3.0);
+
+                const double b_x = u_fz[idf] * tau_xx + v_fz[idf] * tau_xy + w_fz[idf] * tau_xz + kappa * dT_dx_fz[idf];
+                const double b_y = u_fz[idf] * tau_xy + v_fz[idf] * tau_yy + w_fz[idf] * tau_yz + kappa * dT_dy_fz[idf];
+                const double b_z = u_fz[idf] * tau_xz + v_fz[idf] * tau_yz + w_fz[idf] * tau_zz + kappa * dT_dz_fz[idf];
+
+                F.vis_flux_fz_momx[idf] = tau_xx * F.zeta_x_fz[idf] + tau_xy * F.zeta_y_fz[idf] + tau_xz * F.zeta_z_fz[idf];
+                F.vis_flux_fz_momy[idf] = tau_xy * F.zeta_x_fz[idf] + tau_yy * F.zeta_y_fz[idf] + tau_yz * F.zeta_z_fz[idf];
+                F.vis_flux_fz_momz[idf] = tau_xz * F.zeta_x_fz[idf] + tau_yz * F.zeta_y_fz[idf] + tau_zz * F.zeta_z_fz[idf];
+                F.vis_flux_fz_E[idf] = b_x * F.zeta_x_fz[idf] + b_y * F.zeta_y_fz[idf] + b_z * F.zeta_z_fz[idf];
+            }
+        }
     }
 }
 
-// 计算内点粘性通量
-void compute_viscous_flux(Field3D &F, const SolverParams &P)
-{
-    const LocalDesc &L = F.L;
-    const double gamma = P.gamma;
-    const double Rgas = P.Rgas;
-    const double Pr = P.Pr;
-    const double Cp = P.Cp;
-    const int nx = L.nx, ny = L.ny, nz = L.nz;
-    const int ngx = L.ngx, ngy = L.ngy, ngz = L.ngz;
 
-    for (int k = ngz; k < ngz+nz; ++k)
-    for (int j = ngy; j < ngy+ny; ++j)
-    for (int i = ngx; i < ngx+nx; ++i)
-    {
-        int id = F.I(i, j, k);
-        double mu = P.get_mu(F.T[id]);
-
-        // 速度散度
-        double divU = F.du_dx[id] + F.dv_dy[id] + F.dw_dz[id];
-
-        // 应力分量
-        double tau_xx = 2.0 * mu * F.du_dx[id] - (2.0/3.0) * mu * divU;
-        double tau_yy = 2.0 * mu * F.dv_dy[id] - (2.0/3.0) * mu * divU;
-        double tau_zz = 2.0 * mu * F.dw_dz[id] - (2.0/3.0) * mu * divU;
-
-        double tau_xy = mu * (F.du_dy[id] + F.dv_dx[id]);
-        double tau_xz = mu * (F.du_dz[id] + F.dw_dx[id]);
-        double tau_yz = mu * (F.dv_dz[id] + F.dw_dy[id]);
-
-        // 热通量
-        double qx = mu * Cp / Pr * F.dT_dx[id];
-        double qy = mu * Cp / Pr * F.dT_dy[id];
-        double qz = mu * Cp / Pr * F.dT_dz[id];
-
-        double u = F.u[id], v = F.v[id], w = F.w[id];
-
-        // X方向粘性通量
-        F.Fvflux_mass[id] = 0.0;
-        F.Fvflux_momx[id] = tau_xx;
-        F.Fvflux_momy[id] = tau_xy;
-        F.Fvflux_momz[id] = tau_xz;
-        F.Fvflux_E[id]    = u*tau_xx + v*tau_xy + w*tau_xz + qx;
-
-        // Y方向粘性通量
-        F.Hvflux_mass[id] = 0.0;
-        F.Hvflux_momx[id] = tau_xy;
-        F.Hvflux_momy[id] = tau_yy;
-        F.Hvflux_momz[id] = tau_yz;
-        F.Hvflux_E[id]    = u*tau_xy + v*tau_yy + w*tau_yz + qy;
-
-        // Z方向粘性通量
-        F.Gvflux_mass[id] = 0.0;
-        F.Gvflux_momx[id] = tau_xz;
-        F.Gvflux_momy[id] = tau_yz;
-        F.Gvflux_momz[id] = tau_zz;
-        F.Gvflux_E[id]    = u*tau_xz + v*tau_yz + w*tau_zz + qz;
-    }
-}
-
+/*
 void compute_vis_flux(Field3D &F, const GridDesc &G)
 {
     const LocalDesc &L = F.L;
@@ -230,11 +517,11 @@ void compute_vis_flux(Field3D &F, const GridDesc &G)
 
         // Compute viscous flux gradients
         // rho 通量为0，不计算
-        /*
-        F.rhs_rho[id] += diff_x(F.Fvflux_mass, i, j, k, dx, order_x, L);
-        F.rhs_rho[id] += diff_y(F.Hvflux_mass, i, j, k, dy, order_y, L);
-        F.rhs_rho[id] += diff_z(F.Gvflux_mass, i, j, k, dz, order_z, L);
-        */
+        
+        //F.rhs_rho[id] += diff_x(F.Fvflux_mass, i, j, k, dx, order_x, L);
+        //F.rhs_rho[id] += diff_y(F.Hvflux_mass, i, j, k, dy, order_y, L);
+        //F.rhs_rho[id] += diff_z(F.Gvflux_mass, i, j, k, dz, order_z, L);
+        
 
         F.rhs_rhou[id] += diff_x(F.Fvflux_momx, i, j, k, dx, order_x, L);
         F.rhs_rhou[id] += diff_y(F.Hvflux_momx, i, j, k, dy, order_y, L);
@@ -255,6 +542,7 @@ void compute_vis_flux(Field3D &F, const GridDesc &G)
 }
 
 // function to compute only du/dx for isotropic turbulence analysis
+
 void compute_gradients_dudx(Field3D &F, const GridDesc &G)
 {
     const LocalDesc &L = F.L;
@@ -277,3 +565,4 @@ void compute_gradients_dudx(Field3D &F, const GridDesc &G)
     }
     
 }
+*/

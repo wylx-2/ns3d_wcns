@@ -1,0 +1,71 @@
+# ============================
+# Solver Parameter File (Periodic + grid.h5)
+# ============================
+
+# physical parameters 0.8451542547285
+Re = 500000
+Ma = 0.3
+gamma = 1.4
+Pr = 0.71
+
+# time stepping
+cfl = 0.3
+dt_fixed = -0.001
+
+# reconstruction and schemes
+fvs_type = LaxFriedrichs
+interpolation = WENO5
+char_recon = True
+riemann_solver = Roe
+
+# mdcd parameters (kept for compatibility)
+mdcd_disp = 0.0463783
+mdcd_diss = 0.020
+
+# grid (these are overwritten by grid.h5 when use_grid_file=true)
+global_nx = 50
+global_ny = 50
+global_nz = 10
+x0 = 0.0
+y0 = 0.0
+z0 = 0.0
+Lx = 1.0
+Ly = 1.0
+Lz = 1.0
+
+# boundary conditions
+bc_xmin = Outflow
+bc_xmax = Outflow
+bc_ymin = Outflow
+bc_ymax = Outflow
+bc_zmin = Outflow
+bc_zmax = Outflow
+
+# periodic coordinate shift vectors for ghost coordinates 非周期一定要置零
+periodic_xi_px = 0.0
+periodic_xi_py = 0.0
+periodic_xi_pz = 0.0
+periodic_eta_px = 0.0
+periodic_eta_py = 0.0
+periodic_eta_pz = 0.0
+periodic_zeta_px = 0.0
+periodic_zeta_py = 0.0
+periodic_zeta_pz = 0.0
+
+# simulation control
+max_steps = 100000
+monitor_stepfreq = 1
+output_timefreq = 0.05
+totaltime = 0.3
+
+# initialization source
+restart = False
+restart_file = ./output/field.h5
+use_grid_file = True
+grid_file = grid_Riemann.h5
+
+# post-processing / monitor
+post_basicfield = True
+isotropicanalyse = False
+monitor_res = True
+monitor_energy = True

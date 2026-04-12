@@ -13,6 +13,9 @@ void compute_diagnostics(Field3D &F, const SolverParams &P, const GridDesc &G)
     // double sum_abs_res_rho = 0.0, sum_abs_res_rhou = 0.0, sum_abs_res_rhov = 0.0, sum_abs_res_rhow = 0.0, sum_abs_res_E = 0.0;
     double sum_sq_res_rho = 0.0, sum_sq_res_rhou = 0.0, sum_sq_res_rhov = 0.0, sum_sq_res_rhow = 0.0, sum_sq_res_E = 0.0;
 	double max_abs_rho = 0.0, max_abs_rhou = 0.0, max_abs_rhov = 0.0, max_abs_rhow = 0.0, max_abs_E = 0.0;
+    double max_abs_u = 0.0, max_abs_v = 0.0, max_abs_w = 0.0;
+    double max_rho = -1e300, min_rho = 1e300;
+    double max_p = -1e300, min_p = 1e300;
     int count = 0;
 
     F.updateResiduals();
@@ -29,6 +32,14 @@ void compute_diagnostics(Field3D &F, const SolverParams &P, const GridDesc &G)
         double rhou = F.rhou[id];
         double rhov = F.rhov[id];
         double rhow = F.rhow[id];
+
+        max_abs_u = std::max(max_abs_u, std::abs(u));
+        max_abs_v = std::max(max_abs_v, std::abs(v));
+        max_abs_w = std::max(max_abs_w, std::abs(w));
+        max_rho = std::max(max_rho, rho);
+        min_rho = std::min(min_rho, rho);
+        max_p = std::max(max_p, p);
+        min_p = std::min(min_p, p);
 
         // max absolute values for normalization
         max_abs_rho = std::max(max_abs_rho, std::abs(rho));
@@ -65,6 +76,9 @@ void compute_diagnostics(Field3D &F, const SolverParams &P, const GridDesc &G)
     // double g_sum_abs_res_rho = 0.0, g_sum_abs_res_rhou = 0.0, g_sum_abs_res_rhov = 0.0, g_sum_abs_res_rhow = 0.0, g_sum_abs_res_E = 0.0;
     double g_sum_sq_res_rho = 0.0, g_sum_sq_res_rhou = 0.0, g_sum_sq_res_rhov = 0.0, g_sum_sq_res_rhow = 0.0, g_sum_sq_res_E = 0.0;
     double g_max_abs_rho = 0.0, g_max_abs_rhou = 0.0, g_max_abs_rhov = 0.0, g_max_abs_rhow = 0.0, g_max_abs_E = 0.0;
+    double g_max_abs_u = 0.0, g_max_abs_v = 0.0, g_max_abs_w = 0.0;
+    double g_max_rho = 0.0, g_min_rho = 0.0;
+    double g_max_p = 0.0, g_min_p = 0.0;
     int g_N = 0;
 
     // MPI_Allreduce(&sum_abs_res_rho, &g_sum_abs_res_rho, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -84,6 +98,13 @@ void compute_diagnostics(Field3D &F, const SolverParams &P, const GridDesc &G)
     MPI_Allreduce(&max_abs_rhov, &g_max_abs_rhov, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(&max_abs_rhow, &g_max_abs_rhow, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(&max_abs_E, &g_max_abs_E, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&max_abs_u, &g_max_abs_u, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&max_abs_v, &g_max_abs_v, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&max_abs_w, &g_max_abs_w, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&max_rho, &g_max_rho, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&min_rho, &g_min_rho, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&max_p, &g_max_p, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&min_p, &g_min_p, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
 
     MPI_Allreduce(&count, &g_N, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
@@ -94,6 +115,14 @@ void compute_diagnostics(Field3D &F, const SolverParams &P, const GridDesc &G)
     F.global_res_rhov = std::sqrt( (g_sum_sq_res_rhov) ) / g_max_abs_rhov;
     F.global_res_rhow = std::sqrt( (g_sum_sq_res_rhow) ) / g_max_abs_rhow;
     F.global_res_E = std::sqrt( (g_sum_sq_res_E) ) / g_max_abs_E;
+
+    F.global_max_abs_u = g_max_abs_u;
+    F.global_max_abs_v = g_max_abs_v;
+    F.global_max_abs_w = g_max_abs_w;
+    F.global_max_rho = g_max_rho;
+    F.global_min_rho = g_min_rho;
+    F.global_max_p = g_max_p;
+    F.global_min_p = g_min_p;
 
 }
 

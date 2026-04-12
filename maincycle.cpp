@@ -79,6 +79,11 @@ void time_advance(Field3D &F, CartDecomp &C, GridDesc &G, SolverParams &P)
                 if (P.monitor_energy) {
                     std::cout << "  Ek_avg=" << F.global_Etot;
                 }
+                std::cout << "  max|u|=" << F.global_max_abs_u
+                          << "  max|v|=" << F.global_max_abs_v
+                          << "  max|w|=" << F.global_max_abs_w
+                          << "  rho[min,max]=[" << F.global_min_rho << "," << F.global_max_rho << "]"
+                          << "  p[min,max]=[" << F.global_min_p << "," << F.global_max_p << "]";
                 std::cout << "\n";
                 if (P.monitor_res) {
                     std::stringstream ss;
