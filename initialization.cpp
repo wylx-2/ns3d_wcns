@@ -1126,6 +1126,7 @@ void initialize_Poiseuille_flow(Field3D &F, const GridDesc &G, const SolverParam
     LocalDesc &L = F.L;
     const double dpdx = P.body_force_x; // pressure gradient driving the flow
     const double mu = P.mu; // dynamic viscosity (arbitrary value for testing)
+    const double Rgas = P.Rgas;
 
     for (int k=L.ngz; k<L.ngz+L.nz; ++k)
     for (int j=L.ngy; j<L.ngy+L.ny; ++j)
@@ -1134,16 +1135,16 @@ void initialize_Poiseuille_flow(Field3D &F, const GridDesc &G, const SolverParam
         double y = F.coord_y[id];
 
         double rho = 1.0;
-        double u = (dpdx / (2.0 * mu)) * (1.0 - y) * y; // parabolic velocity profile
+        double u = 0.0; //(dpdx / (2.0 * mu)) * (1.0 - y) * y; // parabolic velocity profile
         double v = 0.0;
         double w = 0.0;
-        double p = 1.0; //+ dpdx * (F.coord_x[id] - G.Lx/2); // linear pressure distribution
+        double T = 1.0; //+ dpdx * (F.coord_x[id] - G.Lx/2); // linear pressure distribution
 
         F.rho[id] = rho;
         F.u[id] = u;
         F.v[id] = v;
         F.w[id] = w;
-        F.p[id] = p;
+        F.p[id] = rho * Rgas * T;
     }
 
 
@@ -1177,5 +1178,62 @@ void initialize_spherical_riemann(Field3D &F, const GridDesc &G, const SolverPar
         F.v[id] = 0.0;
         F.w[id] = 0.0;
         F.p[id] = p;
+    }
+}
+
+void initialize_channel_flow_turbulent(Field3D &F, const GridDesc &G, const SolverParams &P)
+{
+    // [0,2*pi] x [-1,1] x [0,pi]
+    LocalDesc &L = F.L;
+    const double gamma = P.gamma;
+    const double Rgas = P.Rgas;
+    const double Re_tau = P.Re; // friction Reynolds number, controls turbulence intensity
+
+    for (int k=L.ngz; k<L.ngz+L.nz; ++k)
+    for (int j=L.ngy; j<L.ngy+L.ny; ++j)
+    for (int i=L.ngx; i<L.ngx+L.nx; ++i) {
+        int id = F.I(i,j,k);
+        double x = F.coord_x[id];
+        double y = F.coord_y[id];
+        double z = F.coord_z[id];
+        double yplus;
+        double rho = 1.0;
+        double u = 0.0, v = 0.0, w = 0.0;
+        double T = 1.0;
+
+        if(y < 0.0)
+        {
+            yplus = (y + 1.0) * Re_tau;
+        }
+        else {
+            yplus = (1.0 - y) * Re_tau;
+        }
+
+        double u_mean = 1.0/0.41 * std::log(1.0 + 0.41 * yplus) + 7.8 * (1.0 - std::exp(-yplus/11.0) - (yplus/11.0)*std::exp(-yplus/3.0)); // Spalding's law of the wall
+        double Amp = 0.1 * u_mean; // turbulence intensity
+        u = u_mean + Amp * (std::sin(20.0 * M_PI * y / 2.0) * std::sin(20.0 * M_PI * z / (2.0 * M_PI)));
+        u = u + Amp * (std::sin(30.0 * M_PI * y / 2.0) * std::sin(30.0 * M_PI * z / (2.0 * M_PI))); 
+        u = u + Amp * (std::sin(35.0 * M_PI * y / 2.0) * std::sin(35.0 * M_PI * z / (2.0 * M_PI))); 
+        u = u + Amp * (std::sin(40.0 * M_PI * y / 2.0) * std::sin(40.0 * M_PI * z / (2.0 * M_PI))); 
+        u = u + Amp * (std::sin(45.0 * M_PI * y / 2.0) * std::sin(45.0 * M_PI * z / (2.0 * M_PI))); 
+        u = u + Amp * (std::sin(50.0 * M_PI * y / 2.0) * std::sin(50.0 * M_PI * z / (2.0 * M_PI))); 
+
+        v = v + Amp * (std::sin(30.0 * M_PI * x / (4.0 * M_PI)) * std::sin(30.0 * M_PI * z / (2.0 * M_PI))); 
+        v = v + Amp * (std::sin(35.0 * M_PI * x / (4.0 * M_PI)) * std::sin(35.0 * M_PI * z / (2.0 * M_PI))); 
+        v = v + Amp * (std::sin(40.0 * M_PI * x / (4.0 * M_PI)) * std::sin(40.0 * M_PI * z / (2.0 * M_PI))); 
+        v = v + Amp * (std::sin(45.0 * M_PI * x / (4.0 * M_PI)) * std::sin(45.0 * M_PI * z / (2.0 * M_PI)));     
+        v = v + Amp * (std::sin(50.0 * M_PI * x / (4.0 * M_PI)) * std::sin(50.0 * M_PI * z / (2.0 * M_PI))); 
+
+        w = w + Amp * (std::sin(30.0 * M_PI * x / (4.0 * M_PI)) * std::sin(30.0 * M_PI * y / 2.0)); 
+        w = w + Amp * (std::sin(35.0 * M_PI * x / (4.0 * M_PI)) * std::sin(35.0 * M_PI * y / 2.0)); 
+        w = w + Amp * (std::sin(40.0 * M_PI * x / (4.0 * M_PI)) * std::sin(40.0 * M_PI * y / 2.0)); 
+        w = w + Amp * (std::sin(45.0 * M_PI * x / (4.0 * M_PI)) * std::sin(45.0 * M_PI * y / 2.0)); 
+        w = w + Amp * (std::sin(50.0 * M_PI * x / (4.0 * M_PI)) * std::sin(50.0 * M_PI * y / 2.0));
+
+        F.rho[id] = rho;
+        F.u[id] = u;
+        F.v[id] = v;
+        F.w[id] = w;
+        F.p[id] = rho * Rgas * T;
     }
 }

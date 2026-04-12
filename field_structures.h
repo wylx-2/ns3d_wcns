@@ -96,10 +96,10 @@ struct SolverParams {
     double get_mu(double T) const
     {   
         // constant viscosity for now
-         return mu; 
+        // return mu; 
 
         // Sutherland's law
-        // return mu * pow(T, 1.5) * (1.0 + S_ref) / (T + S_ref);
+        return mu * pow(T, 1.5) * (1.0 + S_ref) / (T + S_ref);
 
         // power law
         // return pow(T, 0.76);

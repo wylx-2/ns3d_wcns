@@ -43,6 +43,9 @@ void generate_full_turbulence(int NX, int NY, int NZ,
                               std::vector<double> &w);
 void init_isotropic_turbulence(Field3D &F, const GridDesc &G, const CartDecomp &C, const SolverParams &P);
 
+// 槽道湍流初始条件
+void initialize_channel_flow_turbulent(Field3D &F, const GridDesc &G, const SolverParams &P);
+
 // 从 write_tecplot_field 的 dat 文件恢复初场
 bool initialize_from_tecplot(Field3D &F,
                              const GridDesc &G,

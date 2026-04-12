@@ -1,10 +1,10 @@
 # ============================
-# Solver Parameter File (Channel Turbulence)
+# Solver Parameter File (Plane Poiseuille)
 # ============================
 
 # physical parameters
-Re = 180
-Ma = 0.006445208698120
+Re = 100
+Ma = 0.1
 gamma = 1.4
 Pr = 0.71
 
@@ -23,15 +23,15 @@ mdcd_disp = 0.0463783
 mdcd_diss = 0.020
 
 # grid (overwritten by grid.h5 when use_grid_file=true)
-global_nx = 48
-global_ny = 36
-global_nz = 36
+global_nx = 257
+global_ny = 129
+global_nz = 6
 x0 = 0.0
-y0 = -1.0
+y0 = 0.0
 z0 = 0.0
-Lx = 6.283185307179586
-Ly = 2
-Lz = 3.141592653589793
+Lx = 1.0
+Ly = 2.0
+Lz = 0.1
 
 # boundary conditions
 bc_xmin = Periodic
@@ -43,7 +43,7 @@ bc_zmax = Periodic
 
 # periodic coordinate shift vectors for ghost coordinates
 # non-periodic directions must be set to zero
-periodic_xi_px = 6.283185307179586
+periodic_xi_px = 2.0
 periodic_xi_py = 0.0
 periodic_xi_pz = 0.0
 periodic_eta_px = 0.0
@@ -51,25 +51,25 @@ periodic_eta_py = 0.0
 periodic_eta_pz = 0.0
 periodic_zeta_px = 0.0
 periodic_zeta_py = 0.0
-periodic_zeta_pz = 3.141592653589793
+periodic_zeta_pz = 0.1
 
 # body force (drives streamwise Poiseuille flow)
 use_body_force = True
-body_force_x = 1.0
+body_force_x = 0.01
 body_force_y = 0.0
 body_force_z = 0.0
 
 # simulation control
 max_steps = 1000000
-monitor_stepfreq = 100
-output_timefreq = 0.1
-totaltime = 3.0
+monitor_stepfreq = 50
+output_timefreq = 1.0
+totaltime = 10.0
 
 # initialization source
-restart = False
+restart = True
 restart_file = restart.h5
 use_grid_file = True
-grid_file = grid_channel_turbulence.h5
+grid_file = grid_poiseuille_Fx.h5
 
 # post-processing / monitor
 post_basicfield = True

@@ -1184,7 +1184,8 @@ bool compute_metrics_and_jacobian(Field3D &F,
 		}
 	}
 
-		// Debug dump: include ghost-layer values for coordinates, first derivatives and conservative metric terms.
+	/*	
+	// Debug dump: include ghost-layer values for coordinates, first derivatives and conservative metric terms.
 	{
 		std::error_code ec;
 		std::filesystem::create_directories("output", ec);
@@ -1242,7 +1243,7 @@ bool compute_metrics_and_jacobian(Field3D &F,
 	}
 
 	// Debug testing
-	/*
+
 	for (int k = 0; k < L.sz; ++k) {
 		for (int j = 0; j < L.sy; ++j) {
 			for (int i = 0; i < L.sx; ++i) {
@@ -1260,13 +1261,13 @@ bool compute_metrics_and_jacobian(Field3D &F,
 			}
 		}
 	}
-	*/
+	
 	write_grid_metric_derivatives_tecplot_rank(F, G, C,
 	                                          x_xi, x_eta, x_zeta,
 	                                          y_xi, y_eta, y_zeta,
 	                                          z_xi, z_eta, z_zeta,
 	                                          "grid_metric_derivatives");
-
+	*/
 	interp_half_x(F.xi_x, F.xi_x_fx, L);
 	interp_half_x(F.xi_y, F.xi_y_fx, L);
 	interp_half_x(F.xi_z, F.xi_z_fx, L);
@@ -1298,6 +1299,7 @@ bool compute_metrics_and_jacobian(Field3D &F,
 	interp_half_z_boundary(F.zeta_z, F.zeta_z_fz, L);
 
 	// Debug output: half-node interpolated metrics
+	/*
 	{
 		std::error_code ec;
 		std::filesystem::create_directories("output", ec);
@@ -1342,7 +1344,7 @@ bool compute_metrics_and_jacobian(Field3D &F,
 				}
 			}
 		}
-	}
+	}*/
 
 	
 	// 返回节点处度量系数
