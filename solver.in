@@ -4,7 +4,7 @@
 
 # physical parameters
 Re = 180
-Ma = 0.006445208698120
+Ma = 0.1
 gamma = 1.4
 Pr = 0.71
 
@@ -60,8 +60,8 @@ body_force_y = 0.0
 body_force_z = 0.0
 
 # simulation control
-max_steps = 1000000
-monitor_stepfreq = 100
+max_steps = 100
+monitor_stepfreq = 1
 output_timefreq = 0.1
 totaltime = 3.0
 

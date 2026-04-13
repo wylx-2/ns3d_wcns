@@ -66,6 +66,7 @@ void time_advance(Field3D &F, CartDecomp &C, GridDesc &G, SolverParams &P)
             if (P.monitor_energy) {
                 compute_total_energy(F, G, C, P);
             }
+            monitor_mean_u_sections(F, G, C, current_time);
 
             double t_now = MPI_Wtime();
             double t_elapsed = t_now - t_start;

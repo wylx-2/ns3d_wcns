@@ -256,6 +256,7 @@ void compute_energy_spectrum(const Field3D &F, const GridDesc &G, const CartDeco
 // compute diagnostics: rms of RHS, total energy, residual
 void compute_diagnostics(Field3D &F, const SolverParams &P, const GridDesc &G);
 void compute_total_energy(Field3D &F, const GridDesc &G, const CartDecomp &C, const SolverParams &P);
+void monitor_mean_u_sections(Field3D &F, const GridDesc &G, const CartDecomp &C, double current_time);
 
 // main time advance loop with monitor & output
 void time_advance(Field3D &F, CartDecomp &C, GridDesc &G, SolverParams &P);

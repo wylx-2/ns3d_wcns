@@ -20,7 +20,7 @@ riemann_solver = Roe
 
 # mdcd parameters (kept for compatibility)
 mdcd_disp = 0.0463783
-mdcd_diss = 0.020
+mdcd_diss = 0.010
 
 # grid (overwritten by grid.h5 when use_grid_file=true)
 global_nx = 257
@@ -60,16 +60,16 @@ body_force_y = 0.0
 body_force_z = 0.0
 
 # simulation control
-max_steps = 1000000
-monitor_stepfreq = 50
+max_steps = 100
+monitor_stepfreq = 40
 output_timefreq = 1.0
-totaltime = 10.0
+totaltime = 20.0
 
 # initialization source
-restart = True
+restart = False
 restart_file = restart.h5
 use_grid_file = True
-grid_file = grid_poiseuille_Fx.h5
+grid_file = grid_poiseuille.h5
 
 # post-processing / monitor
 post_basicfield = True

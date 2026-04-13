@@ -1,5 +1,7 @@
 #include "field_structures.h"
 #include "ns3d_func.h"
+#include <cmath>
+#include <iostream>
 
 // -----------------------------------------------------------------------------
 // 中间诊断函数，计算总能量、残差、RMS
@@ -154,6 +156,84 @@ void compute_total_energy(Field3D &F, const GridDesc &G, const CartDecomp &C, co
     double global_sum = 0.0;
     MPI_Allreduce(&local_sum, &global_sum, 1, MPI_DOUBLE, MPI_SUM, C.cart_comm);
     F.global_Etot = global_sum;
+}
+
+// -----------------------------------------------------------------------------
+// 监控流向速度: 在 x=0 与 x=pi 截面统计 u 的截面平均值（全局 MPI 汇总）
+// -----------------------------------------------------------------------------
+void monitor_mean_u_sections(Field3D &F,
+                             const GridDesc &G,
+                             const CartDecomp &C,
+                             double current_time)
+{
+    const LocalDesc &L = F.L;
+    if (G.global_nx <= 0 || G.dx <= 0.0) {
+        if (C.rank == 0) {
+            std::cout << "[Monitor U-section] invalid grid spacing in x; skip\n";
+        }
+        return;
+    }
+
+    const auto nearest_global_i = [&](double x_target) -> int {
+        long long gi = static_cast<long long>(std::llround((x_target - G.x0) / G.dx));
+        if (C.periods[0]) {
+            const long long n = static_cast<long long>(G.global_nx);
+            gi = ((gi % n) + n) % n;
+            return static_cast<int>(gi);
+        }
+        if (gi < 0) gi = 0;
+        if (gi > static_cast<long long>(G.global_nx - 1)) gi = static_cast<long long>(G.global_nx - 1);
+        return static_cast<int>(gi);
+    };
+
+    const int gi_x0 = nearest_global_i(0.0);
+    const int gi_xpi = nearest_global_i(M_PI);
+
+    double local_sum_x0 = 0.0;
+    double local_sum_xpi = 0.0;
+    double local_cnt_x0 = 0.0;
+    double local_cnt_xpi = 0.0;
+
+    for (int k = L.ngz; k < L.ngz + L.nz; ++k) {
+        for (int j = L.ngy; j < L.ngy + L.ny; ++j) {
+            for (int i = L.ngx; i < L.ngx + L.nx; ++i) {
+                const int gi = L.ox + (i - L.ngx);
+                const int id = F.I(i, j, k);
+                if (gi == gi_x0) {
+                    local_sum_x0 += F.u[id] * F.Ja[id]; // weight by local cell volume for better accuracy
+                    local_cnt_x0 += F.Ja[id]; // count weighted by local cell volume for better accuracy
+                }
+                if (gi == gi_xpi) {
+                    local_sum_xpi += F.u[id] * F.Ja[id]; // weight by local cell volume for better accuracy
+                    local_cnt_xpi += F.Ja[id]; // count weighted by local cell volume for better accuracy
+                }
+            }
+        }
+    }
+
+    double global_sum_x0 = 0.0;
+    double global_sum_xpi = 0.0;
+    double global_cnt_x0 = 0.0;
+    double global_cnt_xpi = 0.0;
+
+    MPI_Allreduce(&local_sum_x0, &global_sum_x0, 1, MPI_DOUBLE, MPI_SUM, C.cart_comm);
+    MPI_Allreduce(&local_sum_xpi, &global_sum_xpi, 1, MPI_DOUBLE, MPI_SUM, C.cart_comm);
+    MPI_Allreduce(&local_cnt_x0, &global_cnt_x0, 1, MPI_DOUBLE, MPI_SUM, C.cart_comm);
+    MPI_Allreduce(&local_cnt_xpi, &global_cnt_xpi, 1, MPI_DOUBLE, MPI_SUM, C.cart_comm);
+
+    const double mean_u_x0 = (global_cnt_x0 > 0) ? (global_sum_x0 / global_cnt_x0) : 0.0;
+    const double mean_u_xpi = (global_cnt_xpi > 0) ? (global_sum_xpi / global_cnt_xpi) : 0.0;
+
+    F.mean_u_x0 = mean_u_x0;
+    F.mean_u_xpi = mean_u_xpi;
+    if (C.rank == 0) {
+        const double x0_actual = G.x0 + gi_x0 * G.dx;
+        const double xpi_actual = G.x0 + gi_xpi * G.dx;
+        std::cout << "[Monitor U-section] t=" << current_time
+                  << "  <u>|x=0(" << x0_actual << ")=" << mean_u_x0
+                  << "  <u>|x=pi(" << xpi_actual << ")=" << mean_u_xpi
+                  << "\n";
+    }
 }
 
 // -----------------------------------------------------------------------------

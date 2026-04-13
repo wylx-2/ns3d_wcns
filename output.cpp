@@ -610,7 +610,8 @@ void write_residuals_tecplot(const Field3D &F, int step, const std::string &file
 	if (step == 1) {
 		ofs << "TITLE = \"Residuals vs Step\"\n";
 		ofs << "VARIABLES = \"Step\" \"Res_rho\" \"Res_rhou\" \"Res_rhov\" \"Res_rhow\" \"Res_E\" \"Etot\" "
-		    << "\"max_abs_u\" \"max_abs_v\" \"max_abs_w\" \"max_rho\" \"min_rho\" \"max_p\" \"min_p\"\n";
+		    << "\"max_abs_u\" \"max_abs_v\" \"max_abs_w\" \"max_rho\" \"min_rho\" \"max_p\" \"min_p\" "
+		    << "\"mean_u_x0\" \"mean_u_xpi\"\n";
 	}
 
 	ofs << std::scientific << std::setprecision(8);
@@ -619,7 +620,8 @@ void write_residuals_tecplot(const Field3D &F, int step, const std::string &file
 		<< F.global_res_E << " " << F.global_Etot << " "
 		<< F.global_max_abs_u << " " << F.global_max_abs_v << " " << F.global_max_abs_w << " "
 		<< F.global_max_rho << " " << F.global_min_rho << " "
-		<< F.global_max_p << " " << F.global_min_p << "\n";
+		<< F.global_max_p << " " << F.global_min_p << " "
+		<< F.mean_u_x0 << " " << F.mean_u_xpi << "\n";
 	ofs.close();
 
 }

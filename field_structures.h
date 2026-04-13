@@ -96,10 +96,10 @@ struct SolverParams {
     double get_mu(double T) const
     {   
         // constant viscosity for now
-        // return mu; 
+        return mu; 
 
         // Sutherland's law
-        return mu * pow(T, 1.5) * (1.0 + S_ref) / (T + S_ref);
+        // return mu * pow(T, 1.5) * (1.0 + S_ref) / (T + S_ref);
 
         // power law
         // return pow(T, 0.76);
@@ -227,7 +227,7 @@ struct Field3D {
     std::vector<double> rho0, rhou0, rhov0, rhow0, E0;
     std::vector<double> res_rho, res_rhou, res_rhov, res_rhow, res_E;
 
-    // golbal residual accumulators
+    // global residual accumulators
     double global_res_rho = 0.0;
     double global_res_rhou = 0.0;
     double global_res_rhov = 0.0;
@@ -241,6 +241,8 @@ struct Field3D {
     double global_min_rho = 0.0;
     double global_max_p = 0.0;
     double global_min_p = 0.0;
+    double mean_u_x0 = 0.0;
+    double mean_u_xpi = 0.0;
 
     // coordinates (optional, for curvilinear grids or post-processing)
     std::vector<double> coord_x, coord_y, coord_z;
